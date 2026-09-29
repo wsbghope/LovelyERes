@@ -1,5 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
+  "identifier": "com.lovelyres.desktop",
   "app": {
     "windows": [
       {
@@ -8,7 +9,6 @@
     ]
   },
   "bundle": {
-    "active": false
+    "active": true
   }
 }
-

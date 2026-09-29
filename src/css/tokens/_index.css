@@ -1,0 +1,150 @@
+/*
+ * LovelyRes design-token defaults.
+ *
+ * Theme files override the colour tokens below after this file is loaded. The
+ * defaults are intentionally complete so the UI remains usable during the
+ * first paint, before the theme manager applies a data-theme attribute.
+ */
+:root {
+  /* Brand and semantic colours */
+  --primary-color: #3b82f6;
+  --primary-hover: #2563eb;
+  --primary-color-hover: #2563eb;
+  --primary-color-alpha-10: rgba(59, 130, 246, 0.10);
+  --primary-color-alpha-20: rgba(59, 130, 246, 0.20);
+  --primary-glow: rgba(59, 130, 246, 0.25);
+  --secondary-color: #818cf8;
+  --accent-color: #6366f1;
+  --accent-rgb: 99, 102, 241;
+  --accent: #6366f1;
+  --accent-blue: #3b82f6;
+  --accent-purple: #8b5cf6;
+  --accent-green: #22c55e;
+  --accent-orange: #f59e0b;
+  --accent-contrast: #ffffff;
+  --success-color: #15803d;
+  --success-color-hover: #166534;
+  --warning-color: #b45309;
+  --error-color: #dc2626;
+  --info-color: #3b82f6;
+
+  /* Surfaces */
+  --bg-primary: #f8fafc;
+  --bg-secondary: #ffffff;
+  --bg-tertiary: #f1f5f9;
+  --bg-dark: #2d3748;
+  --bg-glass: rgba(255, 255, 255, 0.82);
+  --glass-bg: rgba(255, 255, 255, 0.82);
+  --glass-border: rgba(255, 255, 255, 0.5);
+  --glass-blur: 16px;
+  --glass-shadow: 0 8px 32px rgba(15, 23, 42, 0.06);
+  --surface-primary: #f8fafc;
+  --surface-secondary: #ffffff;
+  --surface-tertiary: #f1f5f9;
+  --hover-bg: rgba(15, 23, 42, 0.04);
+  --bg-hover: rgba(15, 23, 42, 0.04);
+  --active-bg: rgba(15, 23, 42, 0.08);
+  --modal-backdrop: rgba(15, 23, 42, 0.45);
+
+  /* Text and borders */
+  --text-primary: #0f172a;
+  --text-secondary: #64748b;
+  --text-tertiary: #94a3b8;
+  --text-light: #94a3b8;
+  --text-disabled: #94a3b8;
+  --text-error: #dc2626;
+  --text-white: #ffffff;
+  --border-color: #e2e8f0;
+  --border-color-hover: #cbd5e1;
+  --border-color-light: rgba(15, 23, 42, 0.06);
+  --border-light: rgba(15, 23, 42, 0.06);
+  --border-subtle: rgba(15, 23, 42, 0.10);
+
+  /* Typography */
+  --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-ui: var(--font-family);
+  --font-brand: "Quicksand", var(--font-family);
+  --font-mono: "Cascadia Code", "Fira Code", Consolas, monospace;
+  --font-size: 14px;
+  --text-sm: 12px;
+  --text-lg: 18px;
+  --text-xl: 20px;
+  --text-2xl: 24px;
+  --text-3xl: 30px;
+  --text-4xl: 36px;
+  --line-height-tight: 1.25;
+  --line-height-normal: 1.5;
+  --line-height-relaxed: 1.75;
+  --letter-spacing-tight: -0.015em;
+  --letter-spacing-normal: 0;
+  --letter-spacing-wide: 0.04em;
+
+  /* Layout */
+  --sidebar-width: 268px;
+  --sidebar-width-collapsed: 52px;
+  --titlebar-bg: var(--bg-secondary);
+  --titlebar-text: var(--text-primary);
+  --statusbar-bg: var(--gradient-accent);
+  --statusbar-text: rgba(255, 255, 255, 0.92);
+  --statusbar-border: transparent;
+  --statusbar-border-top: transparent;
+  --btn-hero-bg: var(--primary-color);
+  --btn-hero-text: #ffffff;
+
+  /* Spacing and radii */
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+  --spacing-xl: 32px;
+  --spacing-2xl: 48px;
+  --spacing-3xl: 64px;
+  --radius-sm: 4px;
+  --border-radius: 8px;
+  --border-radius-sm: 4px;
+  --border-radius-md: 8px;
+  --border-radius-lg: 12px;
+  --border-radius-xl: 16px;
+  --border-radius-2xl: 24px;
+  --border-radius-full: 9999px;
+
+  /* Shadows and elevation */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 8px rgba(15, 23, 42, 0.08);
+  --shadow-lg: 0 8px 24px rgba(15, 23, 42, 0.12);
+  --shadow-xl: 0 20px 60px rgba(15, 23, 42, 0.18);
+  --card-shadow: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --card-shadow-hover: 0 8px 24px rgba(0, 0, 0, 0.08), 0 2px 8px rgba(0, 0, 0, 0.04);
+  --modal-shadow: 0 20px 60px rgba(15, 23, 42, 0.18);
+  --elevation-0: none;
+  --elevation-1: var(--shadow-sm);
+  --elevation-2: var(--shadow-md);
+  --elevation-3: var(--shadow-lg);
+  --elevation-4: var(--shadow-xl);
+  --elevation-5: var(--shadow-xl);
+  --elevation-float: var(--shadow-lg);
+  --elevation-glow: 0 0 18px var(--primary-glow);
+
+  /* Motion */
+  --motion-fast: 120ms;
+  --motion-normal: 220ms;
+  --motion-slow: 360ms;
+  --motion-slower: 600ms;
+  --ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-bounce: cubic-bezier(0.68, -0.55, 0.265, 1.55);
+  --transition-slow: 360ms var(--ease-smooth);
+
+  /* Navigation and controls */
+  --sidebar-bg: var(--bg-tertiary);
+  --sidebar-hover-bg: var(--hover-bg);
+  --sidebar-active-bg: var(--primary-color-alpha-10);
+  --scrollbar-thumb: var(--border-color);
+  --scrollbar-thumb-hover: var(--primary-color);
+  --scrollbar-track: transparent;
+  --focus-ring-color: var(--primary-color);
+  --focus-ring-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);
+  --selection-bg: var(--primary-color);
+  --selection-text: #ffffff;
+}

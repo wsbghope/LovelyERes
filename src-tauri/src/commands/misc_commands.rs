@@ -61,6 +61,10 @@ pub async fn get_theme_settings(state: State<'_, AppState>) -> Result<serde_json
 pub async fn set_current_theme(app: tauri::AppHandle, theme: String, state: State<'_, AppState>) -> Result<(), String> {
     use tauri::Emitter;
 
+    if !settings::is_supported_theme(&theme) {
+        return Err(format!("不支持的主题: {}", theme));
+    }
+
     let mut settings = state.settings.lock().map_err(|_| "获取设置锁失败".to_string())?;
     settings.theme = theme.clone();
 
@@ -89,6 +93,8 @@ pub async fn save_app_settings(
     new_settings: settings::AppSettings,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
+    settings::validate_settings(&new_settings)?;
+
     let mut settings = state.settings.lock().map_err(|_| "获取设置锁失败".to_string())?;
     *settings = new_settings.clone();
 
@@ -114,7 +120,10 @@ pub async fn read_settings_file() -> Result<String, String> {
         let content = fs::read_to_string(&settings_path)
             .map_err(|e| format!("读取设置文件失败: {}", e))?;
         println!("📄 设置文件内容长度: {} 字符", content.len());
-        Ok(content)
+        let parsed: settings::AppSettings = serde_json::from_str(&content)
+            .map_err(|e| format!("解析设置文件失败: {}", e))?;
+        serde_json::to_string_pretty(&parsed)
+            .map_err(|e| format!("序列化设置文件失败: {}", e))
     } else {
         println!("⚠️ 设置文件不存在: {:?}", settings_path);
         // 如果文件不存在，返回空字符串
@@ -124,15 +133,20 @@ pub async fn read_settings_file() -> Result<String, String> {
 
 /// 写入设置文件
 #[tauri::command]
-pub async fn write_settings_file(content: String) -> Result<(), String> {
-    use std::fs;
+pub async fn write_settings_file(
+    content: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let parsed: settings::AppSettings = serde_json::from_str(&content)
+        .map_err(|e| format!("设置格式无效: {}", e))?;
+    settings::validate_settings(&parsed)?;
 
-    // 获取应用数据目录
-    let mut settings_path = settings::get_app_data_dir()?;
-    settings_path.push("settings.json");
-
-    fs::write(&settings_path, content)
-        .map_err(|e| format!("写入设置文件失败: {}", e))
+    // Persist first, then update the in-memory state so later commands (for
+    // example theme changes) cannot overwrite newly saved frontend settings.
+    settings::save_settings(&parsed)?;
+    let mut current_settings = state.settings.lock().map_err(|_| "获取设置锁失败".to_string())?;
+    *current_settings = parsed;
+    Ok(())
 }
 
 // 加密相关命令
@@ -292,11 +306,6 @@ fn get_fonts_from_winapi() -> Result<Vec<String>, String> {
     }
 }
 
-#[cfg(not(target_os = "windows"))]
-fn get_fonts_from_winapi() -> Result<Vec<String>, String> {
-    Err("非Windows系统不支持WinAPI方法".to_string())
-}
-
 /// 从Windows注册表获取字体列表
 #[cfg(target_os = "windows")]
 fn get_fonts_from_registry() -> Result<Vec<String>, String> {
@@ -358,11 +367,6 @@ fn get_fonts_from_registry() -> Result<Vec<String>, String> {
     }
 }
 
-#[cfg(not(target_os = "windows"))]
-fn get_fonts_from_registry() -> Result<Vec<String>, String> {
-    Err("非Windows系统不支持注册表方法".to_string())
-}
-
 /// 从字体目录获取字体列表
 #[cfg(target_os = "windows")]
 fn get_fonts_from_directory() -> Result<Vec<String>, String> {
@@ -416,11 +420,6 @@ fn get_fonts_from_directory() -> Result<Vec<String>, String> {
     fonts.dedup();
 
     Ok(fonts)
-}
-
-#[cfg(not(target_os = "windows"))]
-fn get_fonts_from_directory() -> Result<Vec<String>, String> {
-    Err("非Windows系统不支持字体目录方法".to_string())
 }
 
 /// 获取默认字体列表（作为后备方案）

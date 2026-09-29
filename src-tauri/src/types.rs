@@ -2,7 +2,30 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::error::Error;
 use std::path::PathBuf;
+
+pub const APP_DATA_DIR_NAME: &str = "lovelyres";
+const LEGACY_APP_DATA_DIR_NAME: &str = "LovelyRes";
+
+/// Resolve the shared application data directory for all backend modules.
+///
+/// Older builds used a capitalized directory name. That is equivalent on the
+/// default Windows/macOS filesystems, but creates a second directory on
+/// case-sensitive filesystems. Migrate the legacy directory before creating
+/// the canonical one so settings and SSH data always share one location.
+pub fn get_app_data_dir() -> Result<PathBuf, Box<dyn Error>> {
+    let data_root = dirs::data_dir().ok_or("无法获取应用数据目录")?;
+    let app_data_dir = data_root.join(APP_DATA_DIR_NAME);
+    let legacy_app_data_dir = data_root.join(LEGACY_APP_DATA_DIR_NAME);
+
+    if !app_data_dir.exists() && legacy_app_data_dir.exists() {
+        std::fs::rename(&legacy_app_data_dir, &app_data_dir)?;
+    }
+
+    std::fs::create_dir_all(&app_data_dir)?;
+    Ok(app_data_dir)
+}
 
 /// 应用数据目录配置
 #[derive(Debug, Clone)]
@@ -18,9 +41,7 @@ pub struct AppDataPaths {
 
 impl AppDataPaths {
     pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
-        let app_data_dir = dirs::data_dir()
-            .ok_or("无法获取应用数据目录")?
-            .join("LovelyRes");
+        let app_data_dir = get_app_data_dir()?;
 
         // 确保目录存在
         std::fs::create_dir_all(&app_data_dir)?;
@@ -549,5 +570,4 @@ pub struct CommandCompletion {
     pub completions: Vec<String>,
     pub prefix: String,
 }
-
 

@@ -371,7 +371,7 @@ export class SettingsManager {
     }
 
     // 验证主题
-    if (settings.theme && !['light', 'dark', 'sakura'].includes(settings.theme)) {
+    if (settings.theme && !['light', 'dark', 'sakura', 'midnight', 'ocean'].includes(settings.theme)) {
       return false;
     }
 

@@ -4,66 +4,113 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
+/// Themes supported by both the frontend and the persisted settings format.
+pub const SUPPORTED_THEMES: [&str; 5] = ["light", "dark", "sakura", "midnight", "ocean"];
+
+pub fn is_supported_theme(theme: &str) -> bool {
+    SUPPORTED_THEMES.contains(&theme)
+}
+
 /// 应用程序设置
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct AppSettings {
     pub theme: String,
     pub language: String,
+    #[serde(alias = "auto_connect")]
     pub auto_connect: bool,
+    #[serde(rename = "defaultSSHPort", alias = "default_ssh_port", alias = "defaultSshPort")]
     pub default_ssh_port: u16,
+    #[serde(alias = "terminal_font")]
     pub terminal_font: String,
+    #[serde(alias = "terminal_font_size")]
     pub terminal_font_size: u16,
+    #[serde(alias = "max_log_lines")]
     pub max_log_lines: u32,
+    #[serde(alias = "auto_save_interval")]
     pub auto_save_interval: u32,
     pub notifications: NotificationSettings,
     pub security: SecuritySettings,
     pub ui: UISettings,
     pub docker: DockerSettings,
     pub ssh: SSHSettings,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ai: Option<serde_json::Value>, // AI设置作为动态JSON，避免结构变化导致序列化失败
 }
 
 /// 通知设置
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct NotificationSettings {
     pub enabled: bool,
+    #[serde(alias = "connection_status")]
     pub connection_status: bool,
+    #[serde(alias = "command_completion")]
     pub command_completion: bool,
+    #[serde(alias = "error_alerts")]
     pub error_alerts: bool,
 }
 
 /// 安全设置
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct SecuritySettings {
+    #[serde(alias = "save_passwords")]
     pub save_passwords: bool,
+    #[serde(alias = "session_timeout")]
     pub session_timeout: u32,
+    #[serde(alias = "require_confirmation")]
     pub require_confirmation: bool,
 }
 
 /// UI设置
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct UISettings {
+    #[serde(alias = "sidebar_width")]
     pub sidebar_width: u32,
+    #[serde(alias = "show_status_bar")]
     pub show_status_bar: bool,
+    #[serde(alias = "compact_mode")]
     pub compact_mode: bool,
+    #[serde(alias = "animations_enabled")]
     pub animations_enabled: bool,
+    #[serde(default = "default_global_font", alias = "global_font")]
+    pub global_font: String,
+    #[serde(default = "default_global_font_size", alias = "global_font_size")]
+    pub global_font_size: u16,
 }
 
 /// Docker设置
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct DockerSettings {
+    #[serde(alias = "auto_refresh")]
     pub auto_refresh: bool,
+    #[serde(alias = "refresh_interval")]
     pub refresh_interval: u32,
+    #[serde(alias = "show_system_containers")]
     pub show_system_containers: bool,
 }
 
 /// SSH设置
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct SSHSettings {
+    #[serde(alias = "keep_alive_interval")]
     pub keep_alive_interval: u32,
+    #[serde(alias = "connection_timeout")]
     pub connection_timeout: u32,
+    #[serde(alias = "max_retries")]
     pub max_retries: u32,
+}
+
+fn default_global_font() -> String {
+    "system".to_string()
+}
+
+fn default_global_font_size() -> u16 {
+    14
 }
 
 impl Default for AppSettings {
@@ -122,6 +169,8 @@ impl Default for UISettings {
             show_status_bar,
             compact_mode: false,
             animations_enabled: true,
+            global_font: default_global_font(),
+            global_font_size: default_global_font_size(),
         }
     }
 }
@@ -148,16 +197,7 @@ impl Default for SSHSettings {
 
 /// 获取应用数据目录
 pub fn get_app_data_dir() -> Result<PathBuf, String> {
-    let app_data_dir = dirs::data_dir()
-        .ok_or("无法获取应用数据目录")?
-        .join("lovelyres");
-
-    // 确保目录存在
-    if !app_data_dir.exists() {
-        fs::create_dir_all(&app_data_dir).map_err(|e| format!("创建应用数据目录失败: {}", e))?;
-    }
-
-    Ok(app_data_dir)
+    crate::types::get_app_data_dir().map_err(|e| format!("获取应用数据目录失败: {}", e))
 }
 
 /// 获取设置文件路径
@@ -242,7 +282,7 @@ pub fn restore_settings(backup_file: PathBuf) -> Result<(), String> {
 /// 验证设置格式
 pub fn validate_settings(settings: &AppSettings) -> Result<(), String> {
     // 验证主题
-    if !["light", "dark", "sakura"].contains(&settings.theme.as_str()) {
+    if !is_supported_theme(&settings.theme) {
         return Err("无效的主题设置".to_string());
     }
 
@@ -272,7 +312,9 @@ pub fn validate_settings(settings: &AppSettings) -> Result<(), String> {
     }
 
     // 验证会话超时
-    if settings.security.session_timeout < 60000 || settings.security.session_timeout > 86400000 {
+    if settings.security.session_timeout != 0
+        && (settings.security.session_timeout < 60000 || settings.security.session_timeout > 86400000)
+    {
         return Err("无效的会话超时设置".to_string());
     }
 
@@ -291,7 +333,9 @@ pub fn validate_settings(settings: &AppSettings) -> Result<(), String> {
         return Err("无效的SSH保活间隔设置".to_string());
     }
 
-    if settings.ssh.connection_timeout < 1000 || settings.ssh.connection_timeout > 600000 {
+    if settings.ssh.connection_timeout != 0
+        && (settings.ssh.connection_timeout < 1000 || settings.ssh.connection_timeout > 600000)
+    {
         return Err("无效的SSH连接超时设置".to_string());
     }
 
@@ -300,6 +344,68 @@ pub fn validate_settings(settings: &AppSettings) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_settings_are_valid() {
+        validate_settings(&AppSettings::default()).expect("default settings must be valid");
+    }
+
+    #[test]
+    fn all_supported_themes_are_valid() {
+        for theme in SUPPORTED_THEMES {
+            let mut settings = AppSettings::default();
+            settings.theme = theme.to_string();
+            validate_settings(&settings).expect("supported theme must be valid");
+        }
+    }
+
+    #[test]
+    fn disabled_timeouts_are_valid() {
+        let mut settings = AppSettings::default();
+        settings.security.session_timeout = 0;
+        settings.ssh.connection_timeout = 0;
+        validate_settings(&settings).expect("zero timeout disables the timeout");
+    }
+
+    #[test]
+    fn settings_round_trip_uses_frontend_camel_case() {
+        let value = serde_json::to_value(AppSettings::default()).expect("settings should serialize");
+
+        assert!(value.get("autoConnect").is_some());
+        assert!(value.get("defaultSSHPort").is_some());
+        assert!(value["ui"].get("globalFont").is_some());
+        assert!(value["ssh"].get("connectionTimeout").is_some());
+        assert!(value.get("ai").is_none());
+
+        let parsed: AppSettings = serde_json::from_value(value).expect("camelCase settings should deserialize");
+        assert_eq!(parsed.ui.global_font, "system");
+        assert_eq!(parsed.ssh.connection_timeout, 0);
+    }
+
+    #[test]
+    fn legacy_snake_case_settings_are_accepted() {
+        let mut value = serde_json::to_value(AppSettings::default()).expect("settings should serialize");
+        let object = value.as_object_mut().expect("settings should be an object");
+
+        let auto_connect = object.remove("autoConnect").expect("camelCase field should exist");
+        object.insert("auto_connect".to_string(), auto_connect);
+
+        let ssh = object
+            .get_mut("ssh")
+            .and_then(serde_json::Value::as_object_mut)
+            .expect("ssh settings should be an object");
+        let connection_timeout = ssh.remove("connectionTimeout").expect("camelCase field should exist");
+        ssh.insert("connection_timeout".to_string(), connection_timeout);
+
+        let parsed: AppSettings = serde_json::from_value(value).expect("legacy settings should deserialize");
+        assert!(!parsed.auto_connect);
+        assert_eq!(parsed.ssh.connection_timeout, 0);
+    }
 }
 
 /// 获取设置文件信息

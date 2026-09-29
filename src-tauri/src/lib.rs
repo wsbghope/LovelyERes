@@ -46,6 +46,7 @@ pub mod ai_proxy;
 pub mod db_manager;
 
 use std::sync::Mutex;
+#[cfg(target_os = "windows")]
 use tauri::Manager;
 
 // 应用状态
@@ -231,7 +232,7 @@ pub fn run() {
             // Web 终端
             open_web_terminal,
         ])
-        .setup(|app| {
+        .setup(|_app| {
             // 应用初始化逻辑
             println!("🚀 LovelyRes 后端初始化完成");
 

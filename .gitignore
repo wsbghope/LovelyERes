@@ -10,6 +10,7 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+tmp/
 *.local
 
 # Editor directories and files
@@ -46,3 +47,7 @@ secrets/
 **/*password*
 **/*secret*
 **/*token*
+
+# Design tokens are source CSS, not credentials or temporary files.
+!src/css/tokens/
+!src/css/tokens/_index.css
