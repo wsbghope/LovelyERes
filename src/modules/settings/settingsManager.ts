@@ -172,12 +172,21 @@ export class SettingsManager {
       // 从后端加载（如果有的话）
       const backendSettings = await this.loadFromBackend();
 
+      const migrateLocalApiKeys = this.hasApiKeys(localSettings) && !this.hasApiKeys(backendSettings);
+
       // 使用深度合并，避免嵌套对象（如ai.providers）被覆盖
       this.settings = this.deepMerge(
         this.getDefaultSettings(),
         localSettings,
         backendSettings
       ) as AppSettings;
+
+      // 旧版本曾把 API Key 明文保存在 localStorage。先迁移到受权限保护的
+      // 后端设置文件，再清理浏览器存储中的副本。
+      if (migrateLocalApiKeys) {
+        await this.saveToBackend();
+      }
+      this.saveToLocalStorage();
 
       // 通知监听器
       this.notifyListeners();
@@ -249,7 +258,7 @@ export class SettingsManager {
    */
   private saveToLocalStorage(): void {
     try {
-      localStorage.setItem('lovelyres-settings', JSON.stringify(this.settings));
+      localStorage.setItem('lovelyres-settings', JSON.stringify(this.withoutApiKeys(this.settings)));
     } catch (error) {
       console.error('保存设置到本地存储失败:', error);
     }
@@ -274,7 +283,7 @@ export class SettingsManager {
    * 获取设置
    */
   getSettings(): AppSettings {
-    return { ...this.settings };
+    return this.cloneSettings(this.settings);
   }
 
   /**
@@ -309,7 +318,7 @@ export class SettingsManager {
    * 导出设置
    */
   exportSettings(): string {
-    return JSON.stringify(this.settings, null, 2);
+    return JSON.stringify(this.withoutApiKeys(this.settings), null, 2);
   }
 
   /**
@@ -345,6 +354,7 @@ export class SettingsManager {
       if (!obj) return prev;
 
       Object.keys(obj).forEach(key => {
+        if (key === '__proto__' || key === 'prototype' || key === 'constructor') return;
         const prevValue = prev[key];
         const objValue = obj[key];
 
@@ -359,6 +369,25 @@ export class SettingsManager {
 
       return prev;
     }, {});
+  }
+
+  private cloneSettings(settings: AppSettings): AppSettings {
+    return JSON.parse(JSON.stringify(settings)) as AppSettings;
+  }
+
+  private withoutApiKeys(settings: AppSettings): AppSettings {
+    const sanitized = this.cloneSettings(settings);
+    for (const provider of Object.values(sanitized.ai?.providers || {})) {
+      provider.apiKey = '';
+    }
+    return sanitized;
+  }
+
+  private hasApiKeys(settings: Partial<AppSettings>): boolean {
+    const providers = settings.ai?.providers;
+    return !!providers && Object.values(providers).some(provider =>
+      typeof provider?.apiKey === 'string' && provider.apiKey.length > 0
+    );
   }
 
   /**
@@ -386,6 +415,21 @@ export class SettingsManager {
       if (settings[field] !== undefined && typeof settings[field] !== 'number') {
         return false;
       }
+    }
+
+    if (settings.ui !== undefined && (typeof settings.ui !== 'object' || settings.ui === null)) {
+      return false;
+    }
+    if (settings.ui?.globalFontSize !== undefined &&
+      (typeof settings.ui.globalFontSize !== 'number' ||
+        !Number.isInteger(settings.ui.globalFontSize) ||
+        settings.ui.globalFontSize < 8 || settings.ui.globalFontSize > 72)) {
+      return false;
+    }
+    if (settings.ui?.globalFont !== undefined &&
+      (typeof settings.ui.globalFont !== 'string' ||
+        settings.ui.globalFont.length > 128 || /[\r\n]/.test(settings.ui.globalFont))) {
+      return false;
     }
 
     return true;

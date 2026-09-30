@@ -447,12 +447,22 @@ export class SSHConfigManager {
     const exportData = {
       version: '1.0',
       timestamp: new Date().toISOString(),
-      connections: this.connections.map(conn => ({
-        ...conn,
-        encryptedPassword: undefined, // 不导出密码
-        isConnected: false,
-        lastConnected: undefined
-      }))
+      connections: this.connections.map(conn => {
+        const { encryptedPassword: _password, keyPassphrase: _passphrase, ...safeConnection } = conn;
+        return {
+          ...safeConnection,
+          accounts: conn.accounts.map(account => {
+            const {
+              encryptedPassword: _accountPassword,
+              keyPassphrase: _accountPassphrase,
+              ...safeAccount
+            } = account;
+            return safeAccount;
+          }),
+          isConnected: false,
+          lastConnected: undefined
+        };
+      })
     };
 
     return JSON.stringify(exportData, null, 2);
