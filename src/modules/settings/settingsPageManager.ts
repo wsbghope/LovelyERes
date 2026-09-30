@@ -12,6 +12,7 @@ export class SettingsPageManager {
   private settingsManager: SettingsManager;
   private systemFonts: string[] = [];
   private eventsBound = false;
+  private initializationVersion = 0;
 
   // 预设提供商（不可删除）
   private readonly presetProviders = ['openai', 'deepseek', 'claude', 'custom'];
@@ -24,14 +25,22 @@ export class SettingsPageManager {
    * 初始化设置页面
    */
   async initialize(): Promise<void> {
+    const overlay = document.getElementById('settings-overlay-container');
+    if (!overlay) return;
+    const version = ++this.initializationVersion;
+
     try {
       console.log('🔧 初始化设置页面...');
 
       // 加载系统字体
       await this.loadSystemFonts();
 
+      if (!this.isCurrentInitialization(version, overlay)) return;
+
       // 加载设置
       await this.settingsManager.loadSettings();
+
+      if (!this.isCurrentInitialization(version, overlay)) return;
 
       // 绑定事件监听器
       this.bindEventListeners();
@@ -123,7 +132,14 @@ export class SettingsPageManager {
    * 重置事件绑定标志（设置覆盖层关闭时调用）
    */
   public resetEventBindings(): void {
+    this.initializationVersion++;
     this.eventsBound = false;
+  }
+
+  private isCurrentInitialization(version: number, overlay: HTMLElement): boolean {
+    return version === this.initializationVersion
+      && overlay.isConnected
+      && document.getElementById('settings-overlay-container') === overlay;
   }
 
   /**

@@ -238,7 +238,7 @@ pub async fn search_ioc_in_logs(
     }
 
     // 按匹配数降序
-    results.sort_by(|a, b| b.count.cmp(&a.count));
+    results.sort_by_key(|item| std::cmp::Reverse(item.count));
 
     Ok(log_analysis::IocSearchResult { results, total_matches })
 }

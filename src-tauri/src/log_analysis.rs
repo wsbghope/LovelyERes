@@ -346,7 +346,7 @@ pub fn analyze_threats(entries: &[LogEntry]) -> ThreatSummary {
     let mut top_ips: Vec<IpCount> = ip_map.into_iter()
         .map(|(ip, (count, last_seen, action))| IpCount { ip, count, last_seen, action_type: action })
         .collect();
-    top_ips.sort_by(|a, b| b.count.cmp(&a.count));
+    top_ips.sort_by_key(|item| std::cmp::Reverse(item.count));
     top_ips.truncate(20);
 
     // Top 20 用户
@@ -356,7 +356,7 @@ pub fn analyze_threats(entries: &[LogEntry]) -> ThreatSummary {
             username, success_count: success, fail_count: fail
         })
         .collect();
-    top_users.sort_by(|a, b| b.count.cmp(&a.count));
+    top_users.sort_by_key(|item| std::cmp::Reverse(item.count));
     top_users.truncate(20);
 
     // 威胁等级

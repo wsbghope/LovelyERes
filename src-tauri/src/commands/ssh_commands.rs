@@ -26,7 +26,8 @@ fn command_with_cwd(command: &str, cwd: Option<&str>) -> String {
 pub async fn load_ssh_connections(
     state: State<'_, AppState>,
 ) -> Result<Vec<types::SSHConnection>, String> {
-    let manager = state.ssh_connection_manager.lock().unwrap();
+    let manager = state.ssh_connection_manager.lock()
+        .map_err(|_| "SSH连接配置锁已损坏".to_string())?;
     manager.load_connections().map_err(|e| e.to_string())
 }
 
@@ -35,7 +36,8 @@ pub async fn save_ssh_connections(
     connections: Vec<types::SSHConnection>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let manager = state.ssh_connection_manager.lock().unwrap();
+    let manager = state.ssh_connection_manager.lock()
+        .map_err(|_| "SSH连接配置锁已损坏".to_string())?;
     manager
         .save_connections(&connections)
         .map_err(|e| e.to_string())
@@ -43,7 +45,8 @@ pub async fn save_ssh_connections(
 
 #[tauri::command]
 pub async fn encrypt_password(password: String, state: State<'_, AppState>) -> Result<String, String> {
-    let manager = state.ssh_connection_manager.lock().unwrap();
+    let manager = state.ssh_connection_manager.lock()
+        .map_err(|_| "SSH连接配置锁已损坏".to_string())?;
     manager
         .encrypt_password(&password)
         .map_err(|e| e.to_string())
@@ -54,7 +57,8 @@ pub async fn decrypt_password(
     encrypted_password: String,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
-    let manager = state.ssh_connection_manager.lock().unwrap();
+    let manager = state.ssh_connection_manager.lock()
+        .map_err(|_| "SSH连接配置锁已损坏".to_string())?;
     manager
         .decrypt_password(&encrypted_password)
         .map_err(|e| e.to_string())
@@ -580,7 +584,8 @@ pub async fn ssh_create_terminal_session(
     state: State<'_, AppState>,
 ) -> Result<String, String> {
     // 获取终端创建锁，确保原子性
-    let _creation_lock = state.ssh_terminal_creation_lock.lock().unwrap();
+    let _creation_lock = state.ssh_terminal_creation_lock.lock()
+        .map_err(|_| "SSH终端创建锁已损坏".to_string())?;
 
     let manager = &state.ssh_manager;
 
@@ -706,7 +711,7 @@ pub async fn ssh_get_completion(
         };
 
         // 执行 ls 命令获取文件列表
-        match manager.execute_command(&format!("ls -1a {}", dir_path)) {
+        match manager.execute_command(&format!("ls -1a -- {}", shell_quote(dir_path))) {
             Ok(output) => {
                 let files: Vec<&str> = output.output.lines().collect();
                 let filename_prefix = if last_word.contains('/') {
@@ -717,8 +722,8 @@ pub async fn ssh_get_completion(
 
                 for file in files {
                     if file.starts_with(filename_prefix) && file != "." && file != ".." {
-                        let full_path = if last_word.contains('/') {
-                            let dir_part = &last_word[..last_word.rfind('/').unwrap() + 1];
+                        let full_path = if let Some(separator_index) = last_word.rfind('/') {
+                            let dir_part = &last_word[..=separator_index];
                             format!("{}{}", dir_part, file)
                         } else {
                             file.to_string()

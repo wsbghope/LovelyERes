@@ -44,6 +44,9 @@ pub mod window_manager;
 pub mod commands;
 pub mod ai_proxy;
 pub mod db_manager;
+// Windows 下把敏感文件 DACL 收紧到当前用户（Unix 无对应概念）
+#[cfg(windows)]
+pub mod win_acl;
 
 use std::sync::Mutex;
 #[cfg(target_os = "windows")]
@@ -156,7 +159,7 @@ pub fn run() {
             commands::sftp_commands::sftp_extract,
             commands::sftp_commands::sftp_chmod,
             commands::sftp_commands::sftp_get_file_details,
-            commands::sftp_commands::save_temp_file,
+            commands::sftp_commands::sftp_upload_bytes,
             // File analysis (still in its own module)
             file_analysis::sftp_file_analysis,
             file_analysis::sftp_file_analysis_independent,
@@ -232,9 +235,12 @@ pub fn run() {
             // Web 终端
             open_web_terminal,
         ])
-        .setup(|_app| {
+        .setup(|app| {
             // 应用初始化逻辑
             println!("🚀 LovelyRes 后端初始化完成");
+
+            // 上次运行若异常退出，可能留下未清理的上传临时文件
+            commands::sftp_commands::cleanup_stale_upload_files();
 
             // 在 Windows 开发环境下，强制关闭主窗口的原生标题栏（decorations），避免 dev 下平台特定配置未生效
             #[cfg(target_os = "windows")]

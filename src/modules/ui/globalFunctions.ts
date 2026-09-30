@@ -29,6 +29,7 @@ interface GlobalFunctionsDeps {
 
 let globalEventsBound = false;
 let sftpListenerBound = false;
+let settingsInitTimer: number | undefined;
 
 /**
  * 注册所有全局函数到 window 对象
@@ -487,15 +488,23 @@ export function initGlobalFunctions(deps: GlobalFunctionsDeps): void {
   (window as any).showSettingsOverlay = () => {
     const renderer = (window as any).app?.modernUIRenderer;
     if (!app || !renderer) return;
+    if (document.getElementById('settings-overlay-container')) return;
     const settingsHTML = renderer.renderSettingsPage();
     const settingsOverlay = document.createElement('div');
     settingsOverlay.innerHTML = settingsHTML;
     settingsOverlay.id = 'settings-overlay-container';
     document.body.appendChild(settingsOverlay);
-    setTimeout(() => settingsPageManager.initialize(), 100);
+    settingsInitTimer = window.setTimeout(() => {
+      settingsInitTimer = undefined;
+      if (settingsOverlay.isConnected) void settingsPageManager.initialize();
+    }, 100);
   };
 
   (window as any).hideSettingsOverlay = () => {
+    if (settingsInitTimer !== undefined) {
+      window.clearTimeout(settingsInitTimer);
+      settingsInitTimer = undefined;
+    }
     const el = document.getElementById('settings-overlay-container');
     if (el) el.remove();
     settingsPageManager.resetEventBindings();
@@ -651,4 +660,3 @@ export function initGlobalFunctions(deps: GlobalFunctionsDeps): void {
   };
 
 }
-

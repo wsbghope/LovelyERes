@@ -51,7 +51,6 @@ class BusyboxManager {
       const selected = await open({
         title: '选择本地 busybox 静态二进制文件',
         multiple: false,
-        filters: [{ name: 'All Files', extensions: ['*'] }],
       });
       if (typeof selected === 'string') {
         localPath = selected;

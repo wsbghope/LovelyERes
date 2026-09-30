@@ -1279,7 +1279,7 @@ export class ModernUIRenderer {
           position: relative;
         ">
           <!-- 关闭按钮 -->
-          <button class="settings-close-btn" style="
+          <button type="button" class="settings-close-btn" aria-label="关闭设置" onclick="window.hideSettingsOverlay?.()" style="
             position: absolute;
             top: var(--spacing-md);
             right: var(--spacing-md);

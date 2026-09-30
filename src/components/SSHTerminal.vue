@@ -411,6 +411,7 @@ interface TerminalInstance {
     username: string
   }
   unlisten?: () => void
+  listenerGeneration?: symbol
   errorCount?: number
   resizeObserver?: ResizeObserver
 }
@@ -961,41 +962,64 @@ const startReceivingOutput = (terminalInstance: TerminalInstance) => {
     try { terminalInstance.unlisten() } catch {}
     terminalInstance.unlisten = undefined
   }
-  // 监听后端事件：ssh_terminal_data / ssh_terminal_closed / ssh_terminal_error
-  listen('ssh_terminal_data', (event: any) => {
-    const { terminalId, data } = event.payload || {}
-    if (terminalId === terminalInstance.id) {
-      terminalInstance.terminal.write(data)
-    }
-  }).then((unlistenFn) => {
-    // 保存解绑函数
-    terminalInstance.unlisten = unlistenFn
-  })
-  // 关闭和错误事件
-  listen('ssh_terminal_closed', (event: any) => {
-    const { terminalId } = event.payload || {}
-    if (terminalId === terminalInstance.id) {
-      terminalInstance.terminal.writeln('\r\n\x1b[33m[会话已结束]\x1b[0m')
-      terminalInstance.isConnected = false
-    }
-  })
-  listen('ssh_terminal_error', (event: any) => {
-    const { terminalId, error } = event.payload || {}
-    if (terminalId === terminalInstance.id) {
-      terminalInstance.terminal.writeln(`\r\n\x1b[31m[错误]\x1b[0m ${error}`)
+  const listenerGeneration = Symbol('ssh-terminal-listeners')
+  terminalInstance.listenerGeneration = listenerGeneration
 
-      // 只有在非超时错误时才立即断开连接
-      if (!error.includes('超时') && !error.includes('timeout') && !error.includes('Timed out')) {
-        terminalInstance.isConnected = false
-      } else {
-        // 对于超时错误，给一个短暂的恢复时间
-        setTimeout(() => {
-          if (!terminalInstance.isConnected) {
-            terminalInstance.terminal.writeln(`\x1b[33m[尝试恢复连接...]\x1b[0m`)
-            // 不强制重连，让后端的重试机制处理
-          }
-        }, 3000)
+  // 监听后端事件：ssh_terminal_data / ssh_terminal_closed / ssh_terminal_error
+  Promise.allSettled([
+    listen('ssh_terminal_data', (event: any) => {
+      const { terminalId, data } = event.payload || {}
+      if (terminalId === terminalInstance.id) {
+        terminalInstance.terminal.write(data)
       }
+    }),
+    listen('ssh_terminal_closed', (event: any) => {
+      const { terminalId } = event.payload || {}
+      if (terminalId === terminalInstance.id) {
+        terminalInstance.terminal.writeln('\r\n\x1b[33m[会话已结束]\x1b[0m')
+        terminalInstance.isConnected = false
+      }
+    }),
+    listen('ssh_terminal_error', (event: any) => {
+      const { terminalId, error } = event.payload || {}
+      if (terminalId === terminalInstance.id) {
+        terminalInstance.terminal.writeln(`\r\n\x1b[31m[错误]\x1b[0m ${error}`)
+
+        // 只有在非超时错误时才立即断开连接
+        if (!error.includes('超时') && !error.includes('timeout') && !error.includes('Timed out')) {
+          terminalInstance.isConnected = false
+        } else {
+          // 对于超时错误，给一个短暂的恢复时间
+          setTimeout(() => {
+            if (!terminalInstance.isConnected) {
+              terminalInstance.terminal.writeln(`\x1b[33m[尝试恢复连接...]\x1b[0m`)
+              // 不强制重连，让后端的重试机制处理
+            }
+          }, 3000)
+        }
+      }
+    })
+  ]).then((results) => {
+    const unlistenFns = results.flatMap(result => result.status === 'fulfilled' ? [result.value] : [])
+    const registrationErrors = results.flatMap(result => result.status === 'rejected' ? [result.reason] : [])
+
+    if (terminalInstance.listenerGeneration !== listenerGeneration || registrationErrors.length > 0) {
+      unlistenFns.forEach(unlisten => unlisten())
+      if (terminalInstance.listenerGeneration === listenerGeneration) {
+        terminalInstance.listenerGeneration = undefined
+      }
+      if (registrationErrors.length > 0) {
+        console.error('注册 SSH 终端事件监听器失败:', registrationErrors)
+      }
+      return
+    }
+
+    terminalInstance.unlisten = () => {
+      if (terminalInstance.listenerGeneration === listenerGeneration) {
+        terminalInstance.listenerGeneration = undefined
+      }
+      unlistenFns.forEach(unlisten => unlisten())
+      terminalInstance.unlisten = undefined
     }
   })
 }
@@ -1038,6 +1062,7 @@ const closeTerminal = async (terminalId: string) => {
     inputBuffers.delete(terminalId)
 
     // 清理事件监听器
+    terminalInstance.listenerGeneration = undefined
     if (terminalInstance.unlisten) {
       try { terminalInstance.unlisten() } catch {}
     }
@@ -2119,6 +2144,7 @@ onUnmounted(() => {
       }
 
       // 清理事件监听器
+      terminalInstance.listenerGeneration = undefined
       if (terminalInstance.unlisten) {
         try { terminalInstance.unlisten() } catch {}
       }
