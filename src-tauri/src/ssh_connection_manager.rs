@@ -10,6 +10,41 @@ use base64::{engine::general_purpose, Engine as _};
 use rand::RngCore;
 use serde_json;
 use std::fs;
+use std::path::Path;
+#[cfg(unix)]
+use std::{fs::OpenOptions, io::Write, os::unix::fs::{OpenOptionsExt, PermissionsExt}};
+
+const ENCRYPTED_SECRET_PREFIX: &str = "enc:v1:";
+
+fn write_private_file(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        let mut file = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .mode(0o600)
+            .open(path)?;
+        file.set_permissions(fs::Permissions::from_mode(0o600))?;
+        file.write_all(data)
+    }
+
+    #[cfg(not(unix))]
+    {
+        fs::write(path, data)
+    }
+}
+
+#[cfg(unix)]
+fn harden_private_file_permissions(path: &Path) -> std::io::Result<()> {
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+}
+
+#[cfg(not(unix))]
+fn harden_private_file_permissions(path: &Path) -> std::io::Result<()> {
+    // Windows 没有文件模式位，改用 DACL 限制为当前用户。
+    crate::win_acl::restrict_to_current_user(path).map_err(std::io::Error::other)
+}
 
 /// SSH连接管理器
 pub struct SSHConnectionManager {
@@ -43,6 +78,11 @@ impl SSHConnectionManager {
 
         let content = fs::read_to_string(config_file)
             .map_err(|e| LovelyResError::FileError(format!("读取SSH配置文件失败: {}", e)))?;
+        // 权限加固失败（网络盘、exFAT 等不支持模式位/ACL 的位置）只告警，
+        // 不应导致连接列表整体加载失败。
+        if let Err(e) = harden_private_file_permissions(config_file) {
+            eprintln!("⚠️ 收紧SSH配置文件权限失败，继续加载: {}", e);
+        }
 
         let mut connections: Vec<SSHConnection> = serde_json::from_str(&content)
             .map_err(|e| LovelyResError::ConfigError(format!("解析SSH配置文件失败: {}", e)))?;
@@ -56,13 +96,20 @@ impl SSHConnectionManager {
             }
         }
 
-        if migrated_count > 0 {
-            println!("🔄 自动迁移了 {} 个旧账号数据到多账号模式", migrated_count);
-            // 保存迁移后的数据
+        let secrets_need_migration = Self::has_plaintext_key_passphrases(&connections);
+        if migrated_count > 0 || secrets_need_migration {
+            if migrated_count > 0 {
+                println!("🔄 自动迁移了 {} 个旧账号数据到多账号模式", migrated_count);
+            }
+            if secrets_need_migration {
+                println!("🔐 正在迁移明文SSH密钥口令");
+            }
             if let Err(e) = self.save_connections(&connections) {
                 println!("⚠️ 保存迁移后的数据失败: {}", e);
             }
         }
+
+        self.decrypt_key_passphrases(&mut connections)?;
 
         //println!("✅ 成功加载 {} 个SSH连接配置", connections.len());
         Ok(connections)
@@ -78,10 +125,13 @@ impl SSHConnectionManager {
                 .map_err(|e| LovelyResError::FileError(format!("创建配置目录失败: {}", e)))?;
         }
 
-        let content = serde_json::to_string_pretty(connections)
+        let mut persisted_connections = connections.to_vec();
+        self.encrypt_key_passphrases(&mut persisted_connections)?;
+
+        let content = serde_json::to_string_pretty(&persisted_connections)
             .map_err(|e| LovelyResError::ConfigError(format!("序列化SSH配置失败: {}", e)))?;
 
-        fs::write(config_file, content)
+        write_private_file(config_file, content.as_bytes())
             .map_err(|e| LovelyResError::FileError(format!("写入SSH配置文件失败: {}", e)))?;
 
         println!("✅ 成功保存 {} 个SSH连接配置", connections.len());
@@ -137,11 +187,62 @@ impl SSHConnectionManager {
             .map_err(|e| LovelyResError::AuthError(format!("解密结果不是有效UTF-8: {}", e)))
     }
 
+    fn encrypt_key_passphrases(&self, connections: &mut [SSHConnection]) -> LovelyResResult<()> {
+        for connection in connections {
+            self.encrypt_optional_secret(&mut connection.key_passphrase)?;
+            for account in &mut connection.accounts {
+                self.encrypt_optional_secret(&mut account.key_passphrase)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn decrypt_key_passphrases(&self, connections: &mut [SSHConnection]) -> LovelyResResult<()> {
+        for connection in connections {
+            self.decrypt_optional_secret(&mut connection.key_passphrase)?;
+            for account in &mut connection.accounts {
+                self.decrypt_optional_secret(&mut account.key_passphrase)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn encrypt_optional_secret(&self, secret: &mut Option<String>) -> LovelyResResult<()> {
+        let Some(value) = secret.as_ref() else { return Ok(()); };
+        if value.is_empty() || value.starts_with(ENCRYPTED_SECRET_PREFIX) {
+            return Ok(());
+        }
+        *secret = Some(format!("{}{}", ENCRYPTED_SECRET_PREFIX, self.encrypt_password(value)?));
+        Ok(())
+    }
+
+    fn decrypt_optional_secret(&self, secret: &mut Option<String>) -> LovelyResResult<()> {
+        let Some(value) = secret.as_ref() else { return Ok(()); };
+        let Some(ciphertext) = value.strip_prefix(ENCRYPTED_SECRET_PREFIX) else { return Ok(()); };
+        *secret = Some(self.decrypt_password(ciphertext)?);
+        Ok(())
+    }
+
+    fn has_plaintext_key_passphrases(connections: &[SSHConnection]) -> bool {
+        let is_plaintext = |secret: &Option<String>| {
+            secret.as_ref().is_some_and(|value| {
+                !value.is_empty() && !value.starts_with(ENCRYPTED_SECRET_PREFIX)
+            })
+        };
+
+        connections.iter().any(|connection| {
+            is_plaintext(&connection.key_passphrase)
+                || connection.accounts.iter().any(|account| is_plaintext(&account.key_passphrase))
+        })
+    }
+
     /// 获取或创建加密密钥
     fn get_or_create_encryption_key(data_paths: &AppDataPaths) -> LovelyResResult<[u8; 32]> {
         let key_file = data_paths.app_data_dir.join("encryption.key");
 
         if key_file.exists() {
+            harden_private_file_permissions(&key_file)
+                .map_err(|e| LovelyResError::FileError(format!("限制加密密钥权限失败: {}", e)))?;
             // 加载现有密钥
             let key_data = fs::read(&key_file)
                 .map_err(|e| LovelyResError::FileError(format!("读取加密密钥失败: {}", e)))?;
@@ -161,7 +262,7 @@ impl SSHConnectionManager {
             OsRng.fill_bytes(&mut key);
 
             // 保存密钥
-            fs::write(&key_file, &key)
+            write_private_file(&key_file, &key)
                 .map_err(|e| LovelyResError::FileError(format!("保存加密密钥失败: {}", e)))?;
 
             println!("🔑 生成新的加密密钥");

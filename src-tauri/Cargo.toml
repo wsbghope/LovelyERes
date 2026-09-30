@@ -44,7 +44,12 @@ rand = "0.8"
 
 # Windows API 依赖
 [target.'cfg(windows)'.dependencies]
-winapi = { version = "0.3", features = ["wingdi", "winuser", "windef"] }
+winapi = { version = "0.3", features = [
+    "wingdi", "winuser", "windef",
+    # 用于把设置文件 / SSH 配置 / 加密密钥的 DACL 收紧到当前用户
+    "aclapi", "accctrl", "securitybaseapi", "processthreadsapi", "handleapi", "winbase",
+    "winnt", "minwindef", "winerror", "basetsd",
+] }
 
 [profile.release]
 panic = "unwind"

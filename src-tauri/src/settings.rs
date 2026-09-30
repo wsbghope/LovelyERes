@@ -3,6 +3,42 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
+#[cfg(unix)]
+use std::{fs::OpenOptions, io::Write, os::unix::fs::{OpenOptionsExt, PermissionsExt}};
+
+fn write_private_file(path: &std::path::Path, data: &[u8]) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        let mut file = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .mode(0o600)
+            .open(path)
+            .map_err(|e| format!("打开设置文件失败: {}", e))?;
+        file.set_permissions(fs::Permissions::from_mode(0o600))
+            .map_err(|e| format!("限制设置文件权限失败: {}", e))?;
+        file.write_all(data)
+            .map_err(|e| format!("写入设置文件失败: {}", e))
+    }
+
+    #[cfg(not(unix))]
+    {
+        fs::write(path, data).map_err(|e| format!("写入设置文件失败: {}", e))
+    }
+}
+
+#[cfg(unix)]
+fn harden_private_file_permissions(path: &std::path::Path) -> Result<(), String> {
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+        .map_err(|e| format!("限制设置文件权限失败: {}", e))
+}
+
+#[cfg(not(unix))]
+fn harden_private_file_permissions(path: &std::path::Path) -> Result<(), String> {
+    crate::win_acl::restrict_to_current_user(path)
+        .map_err(|e| format!("限制设置文件权限失败: {}", e))
+}
 
 /// Themes supported by both the frontend and the persisted settings format.
 pub const SUPPORTED_THEMES: [&str; 5] = ["light", "dark", "sakura", "midnight", "ocean"];
@@ -215,6 +251,12 @@ pub fn load_settings() -> Result<AppSettings, String> {
         return Ok(AppSettings::default());
     }
 
+    // 权限加固属于纵深防御：在网络盘、exFAT 等不支持模式位/ACL 的位置
+    // 会失败，此时只告警，不应让用户连设置都打不开。
+    if let Err(error) = harden_private_file_permissions(&settings_file) {
+        eprintln!("⚠️ 收紧设置文件权限失败，继续加载: {}", error);
+    }
+
     let settings_content =
         fs::read_to_string(&settings_file).map_err(|e| format!("读取设置文件失败: {}", e))?;
 
@@ -232,7 +274,7 @@ pub fn save_settings(settings: &AppSettings) -> Result<(), String> {
     let settings_content =
         serde_json::to_string_pretty(settings).map_err(|e| format!("序列化设置失败: {}", e))?;
 
-    fs::write(&settings_file, settings_content).map_err(|e| format!("写入设置文件失败: {}", e))?;
+    write_private_file(&settings_file, settings_content.as_bytes())?;
 
     println!("✅ 成功保存应用设置");
     Ok(())
@@ -255,7 +297,7 @@ pub fn backup_settings() -> Result<PathBuf, String> {
     let settings_content =
         serde_json::to_string_pretty(&settings).map_err(|e| format!("序列化设置失败: {}", e))?;
 
-    fs::write(&backup_file, settings_content).map_err(|e| format!("写入备份文件失败: {}", e))?;
+    write_private_file(&backup_file, settings_content.as_bytes())?;
 
     println!("✅ 设置已备份到: {:?}", backup_file);
     Ok(backup_file)
@@ -299,6 +341,20 @@ pub fn validate_settings(settings: &AppSettings) -> Result<(), String> {
     // 验证字体大小
     if settings.terminal_font_size < 8 || settings.terminal_font_size > 72 {
         return Err("无效的终端字体大小设置".to_string());
+    }
+
+    // 验证全局界面字体设置，避免异常值影响跨平台渲染或配置文件
+    if settings.ui.global_font_size < 8 || settings.ui.global_font_size > 72 {
+        return Err("无效的全局字体大小设置".to_string());
+    }
+    if settings.ui.global_font.len() > 128
+        || settings
+            .ui
+            .global_font
+            .chars()
+            .any(|character| character == '\r' || character == '\n')
+    {
+        return Err("无效的全局字体设置".to_string());
     }
 
     // 验证日志行数
@@ -346,6 +402,34 @@ pub fn validate_settings(settings: &AppSettings) -> Result<(), String> {
     Ok(())
 }
 
+/// 获取设置文件信息
+pub fn get_settings_info() -> Result<serde_json::Value, String> {
+    let settings_file = get_settings_file_path()?;
+
+    if !settings_file.exists() {
+        return Ok(serde_json::json!({
+            "exists": false,
+            "path": settings_file.to_string_lossy(),
+            "size": 0,
+            "modified": null
+        }));
+    }
+
+    let metadata =
+        fs::metadata(&settings_file).map_err(|e| format!("获取文件元数据失败: {}", e))?;
+
+    let modified = metadata
+        .modified()
+        .map_err(|e| format!("获取文件修改时间失败: {}", e))?;
+
+    Ok(serde_json::json!({
+        "exists": true,
+        "path": settings_file.to_string_lossy(),
+        "size": metadata.len(),
+        "modified": chrono::DateTime::<chrono::Utc>::from(modified).to_rfc3339()
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -358,8 +442,10 @@ mod tests {
     #[test]
     fn all_supported_themes_are_valid() {
         for theme in SUPPORTED_THEMES {
-            let mut settings = AppSettings::default();
-            settings.theme = theme.to_string();
+            let settings = AppSettings {
+                theme: theme.to_string(),
+                ..AppSettings::default()
+            };
             validate_settings(&settings).expect("supported theme must be valid");
         }
     }
@@ -370,6 +456,20 @@ mod tests {
         settings.security.session_timeout = 0;
         settings.ssh.connection_timeout = 0;
         validate_settings(&settings).expect("zero timeout disables the timeout");
+    }
+
+    #[test]
+    fn invalid_global_font_size_is_rejected() {
+        let mut settings = AppSettings::default();
+        settings.ui.global_font_size = 7;
+        assert!(validate_settings(&settings).is_err());
+    }
+
+    #[test]
+    fn multiline_global_font_is_rejected() {
+        let mut settings = AppSettings::default();
+        settings.ui.global_font = "system\nmalformed".to_string();
+        assert!(validate_settings(&settings).is_err());
     }
 
     #[test]
@@ -406,32 +506,4 @@ mod tests {
         assert!(!parsed.auto_connect);
         assert_eq!(parsed.ssh.connection_timeout, 0);
     }
-}
-
-/// 获取设置文件信息
-pub fn get_settings_info() -> Result<serde_json::Value, String> {
-    let settings_file = get_settings_file_path()?;
-
-    if !settings_file.exists() {
-        return Ok(serde_json::json!({
-            "exists": false,
-            "path": settings_file.to_string_lossy(),
-            "size": 0,
-            "modified": null
-        }));
-    }
-
-    let metadata =
-        fs::metadata(&settings_file).map_err(|e| format!("获取文件元数据失败: {}", e))?;
-
-    let modified = metadata
-        .modified()
-        .map_err(|e| format!("获取文件修改时间失败: {}", e))?;
-
-    Ok(serde_json::json!({
-        "exists": true,
-        "path": settings_file.to_string_lossy(),
-        "size": metadata.len(),
-        "modified": chrono::DateTime::<chrono::Utc>::from(modified).to_rfc3339()
-    }))
 }
