@@ -465,14 +465,12 @@ export class UploadModal {
         // 构建远程文件路径
         const remotePath = `${this.currentTargetDir}/${file.name}`;
         
-        // 将文件转换为临时本地路径（这里需要使用Tauri的文件API）
-        const localPath = await this.saveFileTemporarily(file);
-        
         try {
-          // 调用后端API上传文件
-          await (window as any).__TAURI__.core.invoke('sftp_upload', {
-            localPath: localPath,
-            remotePath: remotePath
+          const data = Array.from(new Uint8Array(await file.arrayBuffer()));
+          await (window as any).__TAURI__.core.invoke('sftp_upload_bytes', {
+            fileName: file.name,
+            data,
+            remotePath
           });
 
           completedFiles++;
@@ -507,17 +505,4 @@ export class UploadModal {
     }
   }
 
-  private async saveFileTemporarily(file: File): Promise<string> {
-    // 将File对象转换为ArrayBuffer
-    const arrayBuffer = await file.arrayBuffer();
-    const uint8Array = new Uint8Array(arrayBuffer);
-
-    // 调用Tauri命令保存临时文件
-    const tempPath = await (window as any).__TAURI__.core.invoke('save_temp_file', {
-      fileName: file.name,
-      data: Array.from(uint8Array)
-    });
-
-    return tempPath;
-  }
 }

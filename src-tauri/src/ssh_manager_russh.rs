@@ -394,11 +394,9 @@ async fn execute_command_async(
             Some(ChannelMsg::Data { data }) => {
                 stdout.extend_from_slice(&data);
             }
-            Some(ChannelMsg::ExtendedData { data, ext }) => {
-                if ext == 1 {
-                    // stderr
-                    stderr.extend_from_slice(&data);
-                }
+            Some(ChannelMsg::ExtendedData { data, ext: 1 }) => {
+                // stderr
+                stderr.extend_from_slice(&data);
             }
             Some(ChannelMsg::ExitStatus { exit_status }) => {
                 exit_code = Some(exit_status as i32);
@@ -881,15 +879,13 @@ fn run_worker(rx: mpsc::Receiver<WorkerCommand>) {
                                                                 serde_json::json!({"terminalId": terminal_id_clone, "data": output}),
                                                             );
                                                         }
-                                                        ChannelMsg::ExtendedData { data, ext } => {
-                                                            // stderr (ext == 1)
-                                                            if ext == 1 {
-                                                                let output = String::from_utf8_lossy(&data).to_string();
-                                                                let _ = window_clone.emit(
-                                                                    "ssh_terminal_data",
-                                                                    serde_json::json!({"terminalId": terminal_id_clone, "data": output}),
-                                                                );
-                                                            }
+                                                        ChannelMsg::ExtendedData { data, ext: 1 } => {
+                                                            // stderr
+                                                            let output = String::from_utf8_lossy(&data).to_string();
+                                                            let _ = window_clone.emit(
+                                                                "ssh_terminal_data",
+                                                                serde_json::json!({"terminalId": terminal_id_clone, "data": output}),
+                                                            );
                                                         }
                                                         ChannelMsg::ExitStatus { exit_status: _ } => {
                                                             let _ = window_clone.emit(
@@ -1940,40 +1936,56 @@ echo "PATH=$PATH""#;
     }
     
     /// Extract file
-    pub fn extract_file(&self, source_path: &str, target_dir: &str) -> Result<(), String> {
+    pub fn extract_file(&self, source_path: &str, target_dir: &str, overwrite: bool) -> Result<(), String> {
         // Detect format and extract
         let cmd = if source_path.ends_with(".zip") {
+            let overwrite_flag = if overwrite { "-o" } else { "-n" };
             format!(
-                "unzip -o '{}' -d '{}'",
+                "unzip {} '{}' -d '{}'",
+                overwrite_flag,
                 source_path.replace("'", "'\\''"),
                 target_dir.replace("'", "'\\''")
             )
         } else if source_path.ends_with(".tar.gz") || source_path.ends_with(".tgz") {
+            let overwrite_flag = if overwrite { "" } else { "-k" };
             format!(
-                "tar -xzf '{}' -C '{}'",
+                "tar {} -xzf '{}' -C '{}'",
+                overwrite_flag,
                 source_path.replace("'", "'\\''"),
                 target_dir.replace("'", "'\\''")
             )
         } else if source_path.ends_with(".tar.bz2") {
+            let overwrite_flag = if overwrite { "" } else { "-k" };
             format!(
-                "tar -xjf '{}' -C '{}'",
+                "tar {} -xjf '{}' -C '{}'",
+                overwrite_flag,
                 source_path.replace("'", "'\\''"),
                 target_dir.replace("'", "'\\''")
             )
         } else if source_path.ends_with(".tar") {
+            let overwrite_flag = if overwrite { "" } else { "-k" };
             format!(
-                "tar -xf '{}' -C '{}'",
+                "tar {} -xf '{}' -C '{}'",
+                overwrite_flag,
                 source_path.replace("'", "'\\''"),
                 target_dir.replace("'", "'\\''")
             )
         } else {
             return Err(format!("Unknown archive format: {}", source_path));
         };
-        
+
         let output = self.execute_command(&cmd)?;
-        if output.exit_code.unwrap_or(0) != 0 {
+        let exit_code = output.exit_code.unwrap_or(0);
+
+        // `tar -k` 遇到已存在的文件会报错并返回 2，这在不覆盖模式下是预期行为，
+        // 不应视为解压失败；其余非零退出码仍然是真失败。
+        let skipped_existing = !overwrite
+            && exit_code != 0
+            && output.output.contains("File exists");
+        if exit_code != 0 && !skipped_existing {
             return Err(format!("Extraction failed: {}", output.output));
         }
+
         Ok(())
     }
     
