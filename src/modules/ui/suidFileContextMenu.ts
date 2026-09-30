@@ -4,6 +4,7 @@
 
 import * as IconPark from '@icon-park/svg'
 import { BaseContextMenu, type MenuAction } from './contextMenu/baseContextMenu'
+import { shellQuote } from '../utils/shellSafety'
 
 export class SUIDFileContextMenu extends BaseContextMenu {
   private currentFile: any = {}
@@ -131,55 +132,57 @@ export class SUIDFileContextMenu extends BaseContextMenu {
 
   protected resolveAction(action: string): MenuAction | null {
     const filePath = this.currentFile.path || ''
+    if (!filePath) return null
+    const quotedPath = shellQuote(filePath)
 
     const actions: Record<string, MenuAction> = {
       'file-details': {
-        command: `stat ${filePath} && echo '---' && ls -la ${filePath}`,
+        command: `stat -- ${quotedPath} && echo '---' && ls -la -- ${quotedPath}`,
         title: `文件详情 - ${filePath}`,
         actionName: '查看文件详情'
       },
       'file-type': {
-        command: `file ${filePath}`,
+        command: `file -- ${quotedPath}`,
         title: `文件类型 - ${filePath}`,
         actionName: '查看文件类型'
       },
       'file-hash': {
-        command: `echo 'MD5:' && md5sum ${filePath} && echo 'SHA256:' && sha256sum ${filePath}`,
+        command: `echo 'MD5:' && md5sum -- ${quotedPath} && echo 'SHA256:' && sha256sum -- ${quotedPath}`,
         title: `文件哈希 - ${filePath}`,
         actionName: '计算文件哈希'
       },
       'file-strings': {
-        command: `strings ${filePath} 2>/dev/null | head -100`,
+        command: `strings -- ${quotedPath} 2>/dev/null | head -100`,
         title: `字符串 - ${filePath}`,
         actionName: '提取可打印字符串'
       },
       'check-package': {
-        command: `dpkg -S ${filePath} 2>/dev/null || rpm -qf ${filePath} 2>/dev/null || echo '未找到所属软件包（可能是手动安装）'`,
+        command: `dpkg -S ${quotedPath} 2>/dev/null || rpm -qf -- ${quotedPath} 2>/dev/null || echo '未找到所属软件包（可能是手动安装）'`,
         title: `所属软件包 - ${filePath}`,
         actionName: '查找所属软件包'
       },
       'verify-integrity': {
-        command: `pkg=$(dpkg -S ${filePath} 2>/dev/null | cut -d: -f1); if [ -n "$pkg" ]; then dpkg --verify $pkg 2>/dev/null || echo '无法验证'; else rpm -V $(rpm -qf ${filePath} 2>/dev/null) 2>/dev/null || echo '无法验证'; fi`,
+        command: `pkg=$(dpkg -S ${quotedPath} 2>/dev/null | cut -d: -f1); if [ -n "$pkg" ]; then dpkg --verify "$pkg" 2>/dev/null || echo '无法验证'; else pkg=$(rpm -qf -- ${quotedPath} 2>/dev/null) && rpm -V "$pkg" 2>/dev/null || echo '无法验证'; fi`,
         title: `完整性验证 - ${filePath}`,
         actionName: '验证完整性'
       },
       'check-capabilities': {
-        command: `getcap ${filePath} 2>/dev/null || echo '无特殊capabilities'`,
+        command: `getcap -- ${quotedPath} 2>/dev/null || echo '无特殊capabilities'`,
         title: `Capabilities - ${filePath}`,
         actionName: '检查capabilities'
       },
       'check-links': {
-        command: `find / -inum $(stat -c %i ${filePath}) 2>/dev/null | head -10`,
+        command: `inode=$(stat -c %i -- ${quotedPath}) && find / -inum "$inode" 2>/dev/null | head -10`,
         title: `硬链接 - ${filePath}`,
         actionName: '查找硬链接'
       },
       'remove-suid': {
-        command: `chmod u-s ${filePath} && echo '✓ 已移除SUID位' && ls -la ${filePath}`,
+        command: `chmod u-s -- ${quotedPath} && echo '✓ 已移除SUID位' && ls -la -- ${quotedPath}`,
         title: `移除SUID - ${filePath}`,
         actionName: '移除SUID位'
       },
       'quarantine': {
-        command: `mkdir -p /tmp/quarantine && cp -a ${filePath} /tmp/quarantine/ && chmod 000 ${filePath} && echo '✓ 文件已隔离到 /tmp/quarantine/ 并移除所有权限'`,
+        command: `mkdir -p /tmp/quarantine && cp -a -- ${quotedPath} /tmp/quarantine/ && chmod 000 -- ${quotedPath} && echo '✓ 文件已隔离到 /tmp/quarantine/ 并移除所有权限'`,
         title: `隔离文件 - ${filePath}`,
         actionName: '隔离文件'
       }

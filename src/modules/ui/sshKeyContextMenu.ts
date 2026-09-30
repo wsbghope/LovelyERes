@@ -4,6 +4,7 @@
 
 import * as IconPark from '@icon-park/svg'
 import { BaseContextMenu, type MenuAction } from './contextMenu/baseContextMenu'
+import { isSafeLinuxUsername, shellQuote } from '../utils/shellSafety'
 
 export class SSHKeyContextMenu extends BaseContextMenu {
   private currentKey: any = {}
@@ -133,41 +134,47 @@ export class SSHKeyContextMenu extends BaseContextMenu {
   protected resolveAction(action: string): MenuAction | null {
     const key = this.currentKey
     const user = key.user || 'root'
-    const file = key.file || `~${user}/.ssh/authorized_keys`
+    const file = key.file || ''
+    if (!isSafeLinuxUsername(user) || !file) {
+      this.showModal('错误', 'SSH 密钥记录无效，已拒绝执行远端命令')
+      return null
+    }
+    const quotedFile = shellQuote(file)
+    const quotedKey = shellQuote(`${key.keyType || ''} ${key.keyContent || ''} ${key.comment || ''}`.trim())
 
     const actions: Record<string, MenuAction> = {
       'view-authorized-keys': {
-        command: `cat ${file} 2>/dev/null || echo '文件不存在或无权限'`,
+        command: `cat -- ${quotedFile} 2>/dev/null || echo '文件不存在或无权限'`,
         title: `SSH授权密钥 - ${user}`,
         actionName: '查看authorized_keys'
       },
       'key-fingerprint': {
-        command: `echo '${key.keyType} ${key.keyContent} ${key.comment || ''}' | ssh-keygen -l -f - 2>/dev/null || echo '无法计算指纹'`,
+        command: `printf '%s\n' ${quotedKey} | ssh-keygen -l -f - 2>/dev/null || echo '无法计算指纹'`,
         title: `密钥指纹 - ${user}`,
         actionName: '查看密钥指纹'
       },
       'check-permissions': {
-        command: `ls -la ${file} && echo '---' && stat ${file}`,
+        command: `ls -la -- ${quotedFile} && echo '---' && stat -- ${quotedFile}`,
         title: `文件权限 - ${file}`,
         actionName: '检查文件权限'
       },
       'check-ssh-dir': {
-        command: `ls -la $(dirname ${file}) && echo '---' && stat $(dirname ${file})`,
+        command: `dir=$(dirname -- ${quotedFile}) && ls -la -- "$dir" && echo '---' && stat -- "$dir"`,
         title: `.ssh目录权限 - ${user}`,
         actionName: '检查.ssh目录权限'
       },
       'check-key-age': {
-        command: `stat -c '%y %n' ${file} && echo '---' && find $(dirname ${file}) -name '*.pub' -exec stat -c '%y %n' {} \\;`,
+        command: `stat -c '%y %n' -- ${quotedFile} && echo '---' && dir=$(dirname -- ${quotedFile}) && find "$dir" -name '*.pub' -exec stat -c '%y %n' {} \\;`,
         title: `密钥时间 - ${user}`,
         actionName: '检查密钥创建时间'
       },
       'all-user-keys': {
-        command: `cat ${file} 2>/dev/null | awk '{print NR": "$1" "$NF}' && echo '---总计:' && wc -l < ${file}`,
+        command: `cat -- ${quotedFile} 2>/dev/null | awk '{print NR": "$1" "$NF}' && echo '---总计:' && wc -l < ${quotedFile}`,
         title: `${user} 的所有密钥`,
         actionName: '列出用户所有密钥'
       },
       'backup-keys': {
-        command: `cp ${file} ${file}.bak.$(date +%Y%m%d%H%M%S) && echo '✓ 已备份到 ${file}.bak.'$(date +%Y%m%d%H%M%S)`,
+        command: `backup=${quotedFile}.bak.$(date +%Y%m%d%H%M%S) && cp -- ${quotedFile} "$backup" && printf '✓ 已备份到 %s\n' "$backup"`,
         title: `备份密钥 - ${user}`,
         actionName: '备份authorized_keys'
       },

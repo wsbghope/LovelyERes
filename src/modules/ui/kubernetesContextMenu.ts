@@ -4,6 +4,7 @@ import {
     Copy, SettingConfig, Analysis, Refresh, CloseOne
 } from '@icon-park/svg';
 import { showConfirm } from './confirmDialog';
+import { isSafeKubernetesIdentifier, shellQuote } from '../utils/shellSafety';
 
 const icon = (fn: any, size = '14') => fn({ theme: 'outline', size, fill: 'currentColor' });
 
@@ -41,58 +42,69 @@ export class KubernetesContextMenu extends BaseContextMenu {
     resolveAction(action: string): MenuAction | null {
         const name = this.currentName;
         const ns = this.currentNamespace;
+        const kind = this.currentKind;
+
+        if (!isSafeKubernetesIdentifier(name)
+            || (ns && !isSafeKubernetesIdentifier(ns))
+            || !isSafeKubernetesIdentifier(kind)) {
+            return null;
+        }
+
+        const qName = shellQuote(name);
+        const qNs = shellQuote(ns);
+        const qKind = shellQuote(kind);
 
         const actions: Record<string, MenuAction> = {
             // Pod actions
-            'pod-yaml': { command: `kubectl get pod ${name} -n ${ns} -o yaml`, title: `Pod YAML — ${name}`, actionName: '查看 YAML' },
-            'pod-describe': { command: `kubectl describe pod ${name} -n ${ns}`, title: `Describe Pod — ${name}`, actionName: 'Describe' },
-            'pod-logs': { command: `kubectl logs ${name} -n ${ns} --tail=200`, title: `Pod 日志 — ${name}`, actionName: '查看日志' },
-            'pod-logs-previous': { command: `kubectl logs ${name} -n ${ns} --tail=100 --previous`, title: `Pod 上一个日志 — ${name}`, actionName: '上一个容器日志' },
-            'pod-exec-sh': { command: `kubectl exec ${name} -n ${ns} -- ps aux`, title: `Pod 进程 — ${name}`, actionName: 'Exec: ps aux' },
-            'pod-env': { command: `kubectl exec ${name} -n ${ns} -- env`, title: `Pod 环境变量 — ${name}`, actionName: '查看环境变量' },
-            'pod-delete': { command: `kubectl delete pod ${name} -n ${ns}`, title: `删除 Pod — ${name}`, actionName: '删除 Pod' },
-            'pod-delete-force': { command: `kubectl delete pod ${name} -n ${ns} --force --grace-period=0`, title: `强制删除 Pod — ${name}`, actionName: '强制删除' },
-            'pod-check-privileged': { command: `kubectl get pod ${name} -n ${ns} -o jsonpath='{.spec.containers[*].securityContext}'`, title: `安全上下文 — ${name}`, actionName: '检查特权' },
-            'pod-check-sa': { command: `kubectl get pod ${name} -n ${ns} -o jsonpath='{.spec.serviceAccountName}'`, title: `ServiceAccount — ${name}`, actionName: '查看 ServiceAccount' },
-            'pod-check-netpol': { command: `kubectl get networkpolicy -n ${ns} -o wide`, title: `网络策略 — ${ns}`, actionName: '检查网络策略' },
+            'pod-yaml': { command: `kubectl get pod ${qName} -n ${qNs} -o yaml`, title: `Pod YAML — ${name}`, actionName: '查看 YAML' },
+            'pod-describe': { command: `kubectl describe pod ${qName} -n ${qNs}`, title: `Describe Pod — ${name}`, actionName: 'Describe' },
+            'pod-logs': { command: `kubectl logs ${qName} -n ${qNs} --tail=200`, title: `Pod 日志 — ${name}`, actionName: '查看日志' },
+            'pod-logs-previous': { command: `kubectl logs ${qName} -n ${qNs} --tail=100 --previous`, title: `Pod 上一个日志 — ${name}`, actionName: '上一个容器日志' },
+            'pod-exec-sh': { command: `kubectl exec ${qName} -n ${qNs} -- ps aux`, title: `Pod 进程 — ${name}`, actionName: 'Exec: ps aux' },
+            'pod-env': { command: `kubectl exec ${qName} -n ${qNs} -- env`, title: `Pod 环境变量 — ${name}`, actionName: '查看环境变量' },
+            'pod-delete': { command: `kubectl delete pod ${qName} -n ${qNs}`, title: `删除 Pod — ${name}`, actionName: '删除 Pod' },
+            'pod-delete-force': { command: `kubectl delete pod ${qName} -n ${qNs} --force --grace-period=0`, title: `强制删除 Pod — ${name}`, actionName: '强制删除' },
+            'pod-check-privileged': { command: `kubectl get pod ${qName} -n ${qNs} -o jsonpath='{.spec.containers[*].securityContext}'`, title: `安全上下文 — ${name}`, actionName: '检查特权' },
+            'pod-check-sa': { command: `kubectl get pod ${qName} -n ${qNs} -o jsonpath='{.spec.serviceAccountName}'`, title: `ServiceAccount — ${name}`, actionName: '查看 ServiceAccount' },
+            'pod-check-netpol': { command: `kubectl get networkpolicy -n ${qNs} -o wide`, title: `网络策略 — ${ns}`, actionName: '检查网络策略' },
 
             // Deployment actions
-            'deploy-yaml': { command: `kubectl get deployment ${name} -n ${ns} -o yaml`, title: `Deployment YAML — ${name}`, actionName: '查看 YAML' },
-            'deploy-describe': { command: `kubectl describe deployment ${name} -n ${ns}`, title: `Describe Deployment — ${name}`, actionName: 'Describe' },
-            'deploy-scale': { command: `kubectl scale deployment ${name} -n ${ns} --replicas=1`, title: `扩缩容 — ${name}`, actionName: '扩缩容' },
-            'deploy-scale-zero': { command: `kubectl scale deployment ${name} -n ${ns} --replicas=0`, title: `缩容至 0 — ${name}`, actionName: '缩容至 0' },
-            'deploy-rollback': { command: `kubectl rollout undo deployment ${name} -n ${ns}`, title: `回滚 — ${name}`, actionName: '回滚部署' },
-            'deploy-history': { command: `kubectl rollout history deployment ${name} -n ${ns}`, title: `部署历史 — ${name}`, actionName: '查看部署历史' },
+            'deploy-yaml': { command: `kubectl get deployment ${qName} -n ${qNs} -o yaml`, title: `Deployment YAML — ${name}`, actionName: '查看 YAML' },
+            'deploy-describe': { command: `kubectl describe deployment ${qName} -n ${qNs}`, title: `Describe Deployment — ${name}`, actionName: 'Describe' },
+            'deploy-scale': { command: `kubectl scale deployment ${qName} -n ${qNs} --replicas=1`, title: `扩缩容 — ${name}`, actionName: '扩缩容' },
+            'deploy-scale-zero': { command: `kubectl scale deployment ${qName} -n ${qNs} --replicas=0`, title: `缩容至 0 — ${name}`, actionName: '缩容至 0' },
+            'deploy-rollback': { command: `kubectl rollout undo deployment ${qName} -n ${qNs}`, title: `回滚 — ${name}`, actionName: '回滚部署' },
+            'deploy-history': { command: `kubectl rollout history deployment ${qName} -n ${qNs}`, title: `部署历史 — ${name}`, actionName: '查看部署历史' },
 
             // Service actions
-            'svc-yaml': { command: `kubectl get service ${name} -n ${ns} -o yaml`, title: `Service YAML — ${name}`, actionName: '查看 YAML' },
-            'svc-describe': { command: `kubectl describe service ${name} -n ${ns}`, title: `Describe Service — ${name}`, actionName: 'Describe' },
-            'svc-endpoints': { command: `kubectl get endpoints ${name} -n ${ns} -o yaml`, title: `Endpoints — ${name}`, actionName: '查看 Endpoints' },
+            'svc-yaml': { command: `kubectl get service ${qName} -n ${qNs} -o yaml`, title: `Service YAML — ${name}`, actionName: '查看 YAML' },
+            'svc-describe': { command: `kubectl describe service ${qName} -n ${qNs}`, title: `Describe Service — ${name}`, actionName: 'Describe' },
+            'svc-endpoints': { command: `kubectl get endpoints ${qName} -n ${qNs} -o yaml`, title: `Endpoints — ${name}`, actionName: '查看 Endpoints' },
 
             // Node actions
-            'node-yaml': { command: `kubectl get node ${name} -o yaml`, title: `Node YAML — ${name}`, actionName: '查看 YAML' },
-            'node-describe': { command: `kubectl describe node ${name}`, title: `Describe Node — ${name}`, actionName: 'Describe' },
-            'node-cordon': { command: `kubectl cordon ${name}`, title: `封锁节点 — ${name}`, actionName: '封锁节点' },
-            'node-uncordon': { command: `kubectl uncordon ${name}`, title: `解封节点 — ${name}`, actionName: '解封节点' },
-            'node-drain': { command: `kubectl drain ${name} --ignore-daemonsets --delete-emptydir-data --force`, title: `排空节点 — ${name}`, actionName: '排空节点' },
-            'node-top': { command: `kubectl top node ${name}`, title: `节点资源 — ${name}`, actionName: '查看资源使用' },
+            'node-yaml': { command: `kubectl get node ${qName} -o yaml`, title: `Node YAML — ${name}`, actionName: '查看 YAML' },
+            'node-describe': { command: `kubectl describe node ${qName}`, title: `Describe Node — ${name}`, actionName: 'Describe' },
+            'node-cordon': { command: `kubectl cordon ${qName}`, title: `封锁节点 — ${name}`, actionName: '封锁节点' },
+            'node-uncordon': { command: `kubectl uncordon ${qName}`, title: `解封节点 — ${name}`, actionName: '解封节点' },
+            'node-drain': { command: `kubectl drain ${qName} --ignore-daemonsets --delete-emptydir-data --force`, title: `排空节点 — ${name}`, actionName: '排空节点' },
+            'node-top': { command: `kubectl top node ${qName}`, title: `节点资源 — ${name}`, actionName: '查看资源使用' },
 
             // CronJob actions
-            'cronjob-yaml': { command: `kubectl get cronjob ${name} -n ${ns} -o yaml`, title: `CronJob YAML — ${name}`, actionName: '查看 YAML' },
-            'cronjob-describe': { command: `kubectl describe cronjob ${name} -n ${ns}`, title: `Describe CronJob — ${name}`, actionName: 'Describe' },
-            'cronjob-delete': { command: `kubectl delete cronjob ${name} -n ${ns}`, title: `删除 CronJob — ${name}`, actionName: '删除 CronJob' },
+            'cronjob-yaml': { command: `kubectl get cronjob ${qName} -n ${qNs} -o yaml`, title: `CronJob YAML — ${name}`, actionName: '查看 YAML' },
+            'cronjob-describe': { command: `kubectl describe cronjob ${qName} -n ${qNs}`, title: `Describe CronJob — ${name}`, actionName: 'Describe' },
+            'cronjob-delete': { command: `kubectl delete cronjob ${qName} -n ${qNs}`, title: `删除 CronJob — ${name}`, actionName: '删除 CronJob' },
 
             // ServiceAccount actions
-            'sa-yaml': { command: `kubectl get sa ${name} -n ${ns} -o yaml`, title: `SA YAML — ${name}`, actionName: '查看 YAML' },
-            'sa-describe': { command: `kubectl describe sa ${name} -n ${ns}`, title: `Describe SA — ${name}`, actionName: 'Describe' },
-            'sa-bindings': { command: `kubectl get rolebindings,clusterrolebindings -A -o json | python3 -c "import sys,json;d=json.load(sys.stdin);[print(f'{i[\"metadata\"][\"name\"]} -> {i[\"roleRef\"][\"name\"]}') for i in d['items'] for s in i.get('subjects',[]) if s.get('name')=='${name}' and s.get('kind')=='ServiceAccount']"`, title: `SA 绑定 — ${name}`, actionName: '查看绑定' },
+            'sa-yaml': { command: `kubectl get sa ${qName} -n ${qNs} -o yaml`, title: `SA YAML — ${name}`, actionName: '查看 YAML' },
+            'sa-describe': { command: `kubectl describe sa ${qName} -n ${qNs}`, title: `Describe SA — ${name}`, actionName: 'Describe' },
+            'sa-bindings': { command: `kubectl get rolebindings,clusterrolebindings -A -o json | python3 -c "import sys,json;d=json.load(sys.stdin);[print(f'{i[\"metadata\"][\"name\"]} -> {i[\"roleRef\"][\"name\"]}') for i in d['items'] for s in i.get('subjects',[]) if s.get('name')==${JSON.stringify(name)} and s.get('kind')=='ServiceAccount']"`, title: `SA 绑定 — ${name}`, actionName: '查看绑定' },
 
             // Pod command inspection
-            'pod-check-cmd': { command: `kubectl get pod ${name} -n ${ns} -o jsonpath='{range .spec.containers[*]}Container: {.name}\\nCommand: {.command}\\nArgs: {.args}\\n---\\n{end}'`, title: `Pod 启动命令 — ${name}`, actionName: '检查启动命令' },
+            'pod-check-cmd': { command: `kubectl get pod ${qName} -n ${qNs} -o jsonpath='{range .spec.containers[*]}Container: {.name}\\nCommand: {.command}\\nArgs: {.args}\\n---\\n{end}'`, title: `Pod 启动命令 — ${name}`, actionName: '检查启动命令' },
 
             // Generic
-            'generic-yaml': { command: `kubectl get ${this.currentKind} ${name} -n ${ns} -o yaml`, title: `${this.currentKind} YAML — ${name}`, actionName: '查看 YAML' },
-            'generic-describe': { command: `kubectl describe ${this.currentKind} ${name} -n ${ns}`, title: `Describe ${this.currentKind} — ${name}`, actionName: 'Describe' },
+            'generic-yaml': { command: `kubectl get ${qKind} ${qName} -n ${qNs} -o yaml`, title: `${this.currentKind} YAML — ${name}`, actionName: '查看 YAML' },
+            'generic-describe': { command: `kubectl describe ${qKind} ${qName} -n ${qNs}`, title: `Describe ${this.currentKind} — ${name}`, actionName: 'Describe' },
         };
 
         return actions[action] || null;

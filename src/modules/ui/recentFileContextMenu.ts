@@ -4,6 +4,7 @@
 
 import * as IconPark from '@icon-park/svg'
 import { BaseContextMenu, type MenuAction } from './contextMenu/baseContextMenu'
+import { shellQuote } from '../utils/shellSafety'
 
 export class RecentFileContextMenu extends BaseContextMenu {
   private currentFile: any = {}
@@ -137,60 +138,62 @@ export class RecentFileContextMenu extends BaseContextMenu {
 
   protected resolveAction(action: string): MenuAction | null {
     const filePath = this.currentFile.path || ''
+    if (!filePath) return null
+    const quotedPath = shellQuote(filePath)
 
     const actions: Record<string, MenuAction> = {
       'file-details': {
-        command: `stat ${filePath} && echo '---' && ls -la ${filePath}`,
+        command: `stat -- ${quotedPath} && echo '---' && ls -la -- ${quotedPath}`,
         title: `详情 - ${filePath}`,
         actionName: '查看详情'
       },
       'file-type': {
-        command: `file ${filePath}`,
+        command: `file -- ${quotedPath}`,
         title: `类型 - ${filePath}`,
         actionName: '查看文件类型'
       },
       'file-content': {
-        command: `head -100 ${filePath} 2>/dev/null || echo '无法读取文件内容'`,
+        command: `head -100 -- ${quotedPath} 2>/dev/null || echo '无法读取文件内容'`,
         title: `内容 - ${filePath}`,
         actionName: '查看文件内容'
       },
       'file-hash': {
-        command: `echo 'MD5:' && md5sum ${filePath} && echo 'SHA256:' && sha256sum ${filePath}`,
+        command: `echo 'MD5:' && md5sum -- ${quotedPath} && echo 'SHA256:' && sha256sum -- ${quotedPath}`,
         title: `哈希 - ${filePath}`,
         actionName: '计算文件哈希'
       },
       'file-strings': {
-        command: `strings ${filePath} 2>/dev/null | head -100`,
+        command: `strings -- ${quotedPath} 2>/dev/null | head -100`,
         title: `字符串 - ${filePath}`,
         actionName: '提取字符串'
       },
       'file-permissions': {
-        command: `ls -la ${filePath} && echo '---' && stat -c 'Owner: %U, Group: %G, Perms: %a' ${filePath}`,
+        command: `ls -la -- ${quotedPath} && echo '---' && stat -c 'Owner: %U, Group: %G, Perms: %a' -- ${quotedPath}`,
         title: `权限 - ${filePath}`,
         actionName: '查看权限'
       },
       'file-acl': {
-        command: `getfacl ${filePath} 2>/dev/null || echo 'ACL不可用'`,
+        command: `getfacl -- ${quotedPath} 2>/dev/null || echo 'ACL不可用'`,
         title: `ACL - ${filePath}`,
         actionName: '查看ACL'
       },
       'check-package': {
-        command: `dpkg -S ${filePath} 2>/dev/null || rpm -qf ${filePath} 2>/dev/null || echo '未找到所属软件包'`,
+        command: `dpkg -S ${quotedPath} 2>/dev/null || rpm -qf -- ${quotedPath} 2>/dev/null || echo '未找到所属软件包'`,
         title: `所属包 - ${filePath}`,
         actionName: '查找所属包'
       },
       'nearby-files': {
-        command: `find $(dirname ${filePath}) -maxdepth 1 -mtime -7 -ls 2>/dev/null | head -30`,
+        command: `dir=$(dirname -- ${quotedPath}) && find "$dir" -maxdepth 1 -mtime -7 -ls 2>/dev/null | head -30`,
         title: `同目录文件 - $(dirname ${filePath})`,
         actionName: '查看同目录修改'
       },
       'backup-file': {
-        command: `cp -a ${filePath} ${filePath}.bak.$(date +%Y%m%d%H%M%S) && echo '✓ 已备份到 ${filePath}.bak.'$(date +%Y%m%d%H%M%S)`,
+        command: `backup=${quotedPath}.bak.$(date +%Y%m%d%H%M%S) && cp -a -- ${quotedPath} "$backup" && printf '✓ 已备份到 %s\n' "$backup"`,
         title: `备份 - ${filePath}`,
         actionName: '备份文件'
       },
       'quarantine': {
-        command: `mkdir -p /tmp/quarantine && cp -a ${filePath} /tmp/quarantine/ && chmod 000 ${filePath} && echo '✓ 文件已隔离到 /tmp/quarantine/'`,
+        command: `mkdir -p /tmp/quarantine && cp -a -- ${quotedPath} /tmp/quarantine/ && chmod 000 -- ${quotedPath} && echo '✓ 文件已隔离到 /tmp/quarantine/'`,
         title: `隔离 - ${filePath}`,
         actionName: '隔离文件'
       }

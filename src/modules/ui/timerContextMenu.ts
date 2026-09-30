@@ -4,6 +4,7 @@
 
 import * as IconPark from '@icon-park/svg'
 import { BaseContextMenu, type MenuAction } from './contextMenu/baseContextMenu'
+import { isSafeSystemdUnit } from '../utils/shellSafety'
 
 export class TimerContextMenu extends BaseContextMenu {
   private currentTimer: any = {}
@@ -126,6 +127,10 @@ export class TimerContextMenu extends BaseContextMenu {
   protected resolveAction(action: string): MenuAction | null {
     const timer = this.currentTimer.timer || ''
     const activates = this.currentTimer.activates || timer.replace('.timer', '.service')
+    if (!isSafeSystemdUnit(timer) || !isSafeSystemdUnit(activates)) {
+      this.showModal('错误', 'Systemd 单元名无效，已拒绝执行远端命令')
+      return null
+    }
 
     const actions: Record<string, MenuAction> = {
       'timer-status': {

@@ -4,6 +4,7 @@
 
 import * as IconPark from '@icon-park/svg'
 import { BaseContextMenu, type MenuAction } from './contextMenu/baseContextMenu'
+import { shellQuote } from '../utils/shellSafety'
 
 export class ShellConfigContextMenu extends BaseContextMenu {
   private currentConfig: any = {}
@@ -120,46 +121,49 @@ export class ShellConfigContextMenu extends BaseContextMenu {
   protected resolveAction(action: string): MenuAction | null {
     const cfg = this.currentConfig
     const file = cfg.file || ''
-    const lineNum = cfg.lineNum || 1
+    const parsedLineNum = Number(cfg.lineNum)
+    const lineNum = Number.isSafeInteger(parsedLineNum) && parsedLineNum > 0 ? parsedLineNum : 1
+    if (!file) return null
+    const quotedFile = shellQuote(file)
 
     const actions: Record<string, MenuAction> = {
       'view-context': {
-        command: `awk 'NR>=${Math.max(1, lineNum - 5)} && NR<=${lineNum + 5}' ${file} | cat -n`,
+        command: `awk 'NR>=${Math.max(1, lineNum - 5)} && NR<=${lineNum + 5}' ${quotedFile} | cat -n`,
         title: `上下文 - ${file}:${lineNum}`,
         actionName: '查看上下文'
       },
       'view-full-file': {
-        command: `cat -n ${file}`,
+        command: `cat -n -- ${quotedFile}`,
         title: `完整文件 - ${file}`,
         actionName: '查看完整文件'
       },
       'file-permissions': {
-        command: `ls -la ${file} && echo '---' && stat ${file}`,
+        command: `ls -la -- ${quotedFile} && echo '---' && stat -- ${quotedFile}`,
         title: `权限 - ${file}`,
         actionName: '检查文件权限'
       },
       'file-history': {
-        command: `stat ${file} && echo '---最近修改:' && ls -la ${file} && echo '---同目录备份:' && ls -la ${file}.* 2>/dev/null || echo '无备份文件'`,
+        command: `stat -- ${quotedFile} && echo '---最近修改:' && ls -la -- ${quotedFile} && echo '---同目录备份:' && ls -la -- ${quotedFile}.* 2>/dev/null || echo '无备份文件'`,
         title: `修改历史 - ${file}`,
         actionName: '查看修改历史'
       },
       'all-suspicious': {
-        command: `grep -n -E '(wget|curl|nc |ncat|bash -i|/dev/tcp|base64|eval|exec|python.*-c|perl.*-e|ruby.*-e|\\|\\s*sh)' ${file} 2>/dev/null`,
+        command: `grep -n -E '(wget|curl|nc |ncat|bash -i|/dev/tcp|base64|eval|exec|python.*-c|perl.*-e|ruby.*-e|\\|\\s*sh)' -- ${quotedFile} 2>/dev/null`,
         title: `全文可疑搜索 - ${file}`,
         actionName: '搜索可疑关键字'
       },
       'check-owner': {
-        command: `ls -la ${file} && echo '---文件所属用户主目录:' && dirname ${file} | xargs ls -la`,
+        command: `ls -la -- ${quotedFile} && echo '---文件所属用户主目录:' && dir=$(dirname -- ${quotedFile}) && ls -la -- "$dir"`,
         title: `文件归属 - ${file}`,
         actionName: '检查文件归属'
       },
       'comment-line': {
-        command: `sed -i '${lineNum}s/^/#/' ${file} && echo '✓ 第${lineNum}行已注释' && sed -n '${lineNum}p' ${file}`,
+        command: `sed -i '${lineNum}s/^/#/' ${quotedFile} && echo '✓ 第${lineNum}行已注释' && sed -n '${lineNum}p' ${quotedFile}`,
         title: `注释行 - ${file}:${lineNum}`,
         actionName: '注释可疑行'
       },
       'backup-file': {
-        command: `cp -a ${file} ${file}.bak.$(date +%Y%m%d%H%M%S) && echo '✓ 已备份到 ${file}.bak.'$(date +%Y%m%d%H%M%S)`,
+        command: `backup=${quotedFile}.bak.$(date +%Y%m%d%H%M%S) && cp -a -- ${quotedFile} "$backup" && printf '✓ 已备份到 %s\n' "$backup"`,
         title: `备份 - ${file}`,
         actionName: '备份配置文件'
       }

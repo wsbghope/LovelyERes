@@ -4,6 +4,7 @@
 
 import * as IconPark from '@icon-park/svg'
 import { BaseContextMenu, type MenuAction } from './contextMenu/baseContextMenu'
+import { isSafeEnvName, shellQuote } from '../utils/shellSafety'
 
 export class EnvVarContextMenu extends BaseContextMenu {
   private currentVar: any = {}
@@ -103,15 +104,21 @@ export class EnvVarContextMenu extends BaseContextMenu {
   protected resolveAction(action: string): MenuAction | null {
     const name = this.currentVar.name || ''
     const value = this.currentVar.value || ''
+    if (!isSafeEnvName(name)) {
+      this.showModal('错误', '环境变量名无效，已拒绝执行远端命令')
+      return null
+    }
+    const quotedName = shellQuote(name)
+    const quotedValue = shellQuote(value)
 
     const actions: Record<string, MenuAction> = {
       'view-full-value': {
-        command: `echo "${name}=" && echo '${value}'`,
+        command: `printf '%s=%s\n' ${quotedName} ${quotedValue}`,
         title: `${name} 完整值`,
         actionName: '查看完整值'
       },
       'trace-source': {
-        command: `grep -rn '${name}' /etc/profile /etc/profile.d/ /etc/environment /etc/bash.bashrc ~/.bashrc ~/.profile 2>/dev/null | head -20`,
+        command: `grep -rn -- ${quotedName} /etc/profile /etc/profile.d/ /etc/environment /etc/bash.bashrc ~/.bashrc ~/.profile 2>/dev/null | head -20`,
         title: `变量来源 - ${name}`,
         actionName: '追踪变量来源'
       },
@@ -126,7 +133,7 @@ export class EnvVarContextMenu extends BaseContextMenu {
         actionName: '检查PATH目录权限'
       },
       'env-all-users': {
-        command: `for user in $(getent passwd | cut -d: -f1 | head -20); do echo "=== $user ==="; su - $user -c "echo \\$${name}" 2>/dev/null; done`,
+        command: `getent passwd | cut -d: -f1 | head -20 | while IFS= read -r user; do echo "=== $user ==="; su - "$user" -c "printenv ${quotedName}" 2>/dev/null; done`,
         title: `各用户 ${name} 值`,
         actionName: '查看各用户变量值'
       }

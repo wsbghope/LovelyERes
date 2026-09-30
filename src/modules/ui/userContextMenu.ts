@@ -5,6 +5,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import * as IconPark from '@icon-park/svg'
 import { BaseContextMenu, type MenuAction } from './contextMenu/baseContextMenu'
+import { isSafeLinuxUsername } from '../utils/shellSafety'
 
 export class UserContextMenu extends BaseContextMenu {
   private currentUser: string = ''
@@ -257,6 +258,10 @@ export class UserContextMenu extends BaseContextMenu {
     }
 
     if (action === 'delete-user') {
+      if (!isSafeLinuxUsername(user)) {
+        this.showModal('错误', '用户名包含不安全字符，已拒绝执行')
+        return true
+      }
       // Safety checks for critical users
       if (user === 'root' || user === '0') {
         this.showModal('错误', '不能删除root用户！')
@@ -277,11 +282,15 @@ export class UserContextMenu extends BaseContextMenu {
 
   protected resolveAction(action: string): MenuAction | null {
     const user = this.currentUser
+    if (!isSafeLinuxUsername(user)) {
+      this.showModal('错误', '用户名包含不安全字符，已拒绝执行远端命令')
+      return null
+    }
     const actions: Record<string, MenuAction> = {
       // 基本信息
       'user-details': { command: `id ${user} 2>/dev/null && echo "" && grep "^${user}:" /etc/passwd 2>/dev/null || echo "无法获取用户详情"`, title: `用户详情 - ${user}`, actionName: '查看用户详情' },
       'group-info': { command: `groups ${user} 2>/dev/null && echo "" && id ${user} 2>/dev/null || echo "无法获取用户组信息"`, title: `用户组信息 - ${user}`, actionName: '查看用户组信息' },
-      'home-dir': { command: `eval echo ~${user} | xargs -I {} sh -c 'echo "主目录: {}" && ls -lad {} 2>/dev/null && echo "" && du -sh {} 2>/dev/null' || echo "无法获取主目录信息"`, title: `主目录信息 - ${user}`, actionName: '查看主目录信息' },
+      'home-dir': { command: `home=$(getent passwd -- ${user} | cut -d: -f6) && if [ -n "$home" ]; then echo "主目录: $home"; ls -lad -- "$home" 2>/dev/null; echo ""; du -sh -- "$home" 2>/dev/null; else echo "无法获取主目录信息"; fi`, title: `主目录信息 - ${user}`, actionName: '查看主目录信息' },
       // 用户管理
       'lock-user': { command: `echo "锁定用户: ${user}"; echo ""; echo "命令: passwd -l ${user}"; echo "⚠️ 需要root权限执行"; echo ""; echo "执行: sudo passwd -l ${user}"`, title: `锁定用户 - ${user}`, actionName: '锁定用户账户' },
       'unlock-user': { command: `echo "解锁用户: ${user}"; echo ""; echo "命令: passwd -u ${user}"; echo "⚠️ 需要root权限执行"; echo ""; echo "执行: sudo passwd -u ${user}"`, title: `解锁用户 - ${user}`, actionName: '解锁用户账户' },
@@ -318,6 +327,10 @@ export class UserContextMenu extends BaseContextMenu {
    * 显示删除用户确认对话框
    */
   private async showDeleteConfirmation(username: string) {
+    if (!isSafeLinuxUsername(username)) {
+      this.showModal('错误', '用户名包含不安全字符，已拒绝执行')
+      return
+    }
     // 查询用户真实主目录（多方法兜底）
     let homeDir = `/home/${username}`;
     try {

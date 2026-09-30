@@ -4,6 +4,7 @@
 
 import * as IconPark from '@icon-park/svg'
 import { BaseContextMenu, type MenuAction } from './contextMenu/baseContextMenu'
+import { isSafeNetworkAddress, isSafeNetworkLabel, isSafePort, shellQuote } from '../utils/shellSafety'
 
 export class NetworkContextMenu extends BaseContextMenu {
   private currentConnection: {
@@ -336,6 +337,15 @@ export class NetworkContextMenu extends BaseContextMenu {
     const foreignPort = this.extractPort(foreignAddress)
     const localPort = this.extractPort(localAddress)
 
+    if (!isSafeNetworkAddress(foreignIP)
+      || !isSafePort(foreignPort)
+      || !isSafePort(localPort)
+      || !isSafeNetworkLabel(protocol)
+      || !isSafeNetworkLabel(state)) {
+      this.showModal('错误', '网络连接数据包含不安全字符，已拒绝执行远端命令')
+      return null
+    }
+
     const actions: Record<string, MenuAction> = {
       // IP信息查询
       'whois': {
@@ -410,7 +420,7 @@ export class NetworkContextMenu extends BaseContextMenu {
         actionName: '黑名单检查'
       },
       'anomaly-detect': {
-        command: `echo "异常连接检测 - ${foreignIP}:${foreignPort}"; echo ""; echo "1. 端口检查:"; if [ ${foreignPort} -lt 1024 ]; then echo "⚠️ 使用特权端口 (<1024)"; else echo "✓ 使用非特权端口"; fi; echo ""; echo "2. 常见端口检查:"; case ${foreignPort} in 22|80|443|3306|5432|6379|27017) echo "✓ 常见服务端口";; *) echo "⚠️ 非常见端口，需要注意";; esac; echo ""; echo "3. 连接状态:"; echo "状态: ${state}"; echo ""; echo "4. 进程信息:"; echo "${process}"`,
+        command: `echo "异常连接检测 - ${foreignIP}:${foreignPort}"; echo ""; echo "1. 端口检查:"; if [ ${foreignPort} -lt 1024 ]; then echo "⚠️ 使用特权端口 (<1024)"; else echo "✓ 使用非特权端口"; fi; echo ""; echo "2. 常见端口检查:"; case ${foreignPort} in 22|80|443|3306|5432|6379|27017) echo "✓ 常见服务端口";; *) echo "⚠️ 非常见端口，需要注意";; esac; echo ""; echo "3. 连接状态:"; echo "状态: ${state}"; echo ""; echo "4. 进程信息:"; printf '%s\\n' ${shellQuote(process)}`,
         title: `异常连接检测 - ${foreignIP}:${foreignPort}`,
         actionName: '异常连接检测'
       },

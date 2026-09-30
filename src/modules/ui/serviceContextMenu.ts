@@ -4,6 +4,7 @@
 
 import * as IconPark from '@icon-park/svg'
 import { BaseContextMenu, type MenuAction } from './contextMenu/baseContextMenu'
+import { isSafeSystemdUnit } from '../utils/shellSafety'
 
 export class ServiceContextMenu extends BaseContextMenu {
   private currentService: string = ''
@@ -257,6 +258,10 @@ export class ServiceContextMenu extends BaseContextMenu {
 
   protected resolveAction(action: string): MenuAction | null {
     const service = this.currentService
+    if (!isSafeSystemdUnit(service)) {
+      this.showModal('错误', '服务名无效，已拒绝执行远端命令')
+      return null
+    }
     const actions: Record<string, MenuAction> = {
       // 基本信息
       'status': { command: `systemctl status ${service} 2>/dev/null || service ${service} status 2>/dev/null || echo "无法获取服务状态"`, title: `服务状态 - ${service}`, actionName: '查看服务状态' },

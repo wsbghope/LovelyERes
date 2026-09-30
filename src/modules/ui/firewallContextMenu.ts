@@ -4,6 +4,7 @@
 
 import * as IconPark from '@icon-park/svg'
 import { BaseContextMenu, type MenuAction } from './contextMenu/baseContextMenu'
+import { isSafeNetworkCidr, isSafeNetworkLabel, shellQuote } from '../utils/shellSafety'
 
 export class FirewallContextMenu extends BaseContextMenu {
   private currentRule: {
@@ -287,7 +288,16 @@ export class FirewallContextMenu extends BaseContextMenu {
   protected resolveAction(action: string): MenuAction | null {
     if (!this.currentRule) return null
 
-    const { chain, protocol, source, destination, options } = this.currentRule
+    const { chain, target, protocol, source, destination, options } = this.currentRule
+    if (!isSafeNetworkLabel(chain)
+      || !isSafeNetworkLabel(target)
+      || !isSafeNetworkLabel(protocol)
+      || !isSafeNetworkCidr(source)
+      || !isSafeNetworkCidr(destination)
+      || options.length > 2048) {
+      return null
+    }
+    const qOptions = shellQuote(options)
 
     const actions: Record<string, MenuAction> = {
       // 规则管理
@@ -336,12 +346,12 @@ export class FirewallContextMenu extends BaseContextMenu {
 
       // 端口管理
       'open-port': {
-        command: `port=$(echo "${options}" | grep -oP 'dpt:\\K[0-9]+' || echo "未知"); if [ "$port" != "未知" ]; then if command -v iptables >/dev/null 2>&1; then echo "开放端口: $port"; echo "命令: iptables -A INPUT -p ${protocol} --dport $port -j ACCEPT"; echo "⚠️ 需要root权限执行"; elif command -v firewall-cmd >/dev/null 2>&1; then echo "命令: firewall-cmd --add-port=$port/${protocol} --permanent"; echo "⚠️ 需要root权限执行"; elif command -v ufw >/dev/null 2>&1; then echo "命令: ufw allow $port/${protocol}"; echo "⚠️ 需要root权限执行"; else echo "⚠️ 未找到防火墙工具"; fi; else echo "⚠️ 无法从规则中提取端口信息"; fi`,
+        command: `port=$(printf '%s\\n' ${qOptions} | grep -oP 'dpt:\\K[0-9]+' || echo "未知"); if [ "$port" != "未知" ]; then if command -v iptables >/dev/null 2>&1; then echo "开放端口: $port"; echo "命令: iptables -A INPUT -p ${protocol} --dport $port -j ACCEPT"; echo "⚠️ 需要root权限执行"; elif command -v firewall-cmd >/dev/null 2>&1; then echo "命令: firewall-cmd --add-port=$port/${protocol} --permanent"; echo "⚠️ 需要root权限执行"; elif command -v ufw >/dev/null 2>&1; then echo "命令: ufw allow $port/${protocol}"; echo "⚠️ 需要root权限执行"; else echo "⚠️ 未找到防火墙工具"; fi; else echo "⚠️ 无法从规则中提取端口信息"; fi`,
         title: '开放端口',
         actionName: '开放端口',
       },
       'close-port': {
-        command: `port=$(echo "${options}" | grep -oP 'dpt:\\K[0-9]+' || echo "未知"); if [ "$port" != "未知" ]; then if command -v iptables >/dev/null 2>&1; then echo "关闭端口: $port"; echo "命令: iptables -A INPUT -p ${protocol} --dport $port -j DROP"; echo "⚠️ 需要root权限执行"; elif command -v firewall-cmd >/dev/null 2>&1; then echo "命令: firewall-cmd --remove-port=$port/${protocol} --permanent"; echo "⚠️ 需要root权限执行"; elif command -v ufw >/dev/null 2>&1; then echo "命令: ufw deny $port/${protocol}"; echo "⚠️ 需要root权限执行"; else echo "⚠️ 未找到防火墙工具"; fi; else echo "⚠️ 无法从规则中提取端口信息"; fi`,
+        command: `port=$(printf '%s\\n' ${qOptions} | grep -oP 'dpt:\\K[0-9]+' || echo "未知"); if [ "$port" != "未知" ]; then if command -v iptables >/dev/null 2>&1; then echo "关闭端口: $port"; echo "命令: iptables -A INPUT -p ${protocol} --dport $port -j DROP"; echo "⚠️ 需要root权限执行"; elif command -v firewall-cmd >/dev/null 2>&1; then echo "命令: firewall-cmd --remove-port=$port/${protocol} --permanent"; echo "⚠️ 需要root权限执行"; elif command -v ufw >/dev/null 2>&1; then echo "命令: ufw deny $port/${protocol}"; echo "⚠️ 需要root权限执行"; else echo "⚠️ 未找到防火墙工具"; fi; else echo "⚠️ 无法从规则中提取端口信息"; fi`,
         title: '关闭端口',
         actionName: '关闭端口',
       },
@@ -373,7 +383,7 @@ export class FirewallContextMenu extends BaseContextMenu {
         actionName: '查看日志',
       },
       'test-rule': {
-        command: `echo "=== 测试规则 ==="; echo ""; echo "规则: ${chain} ${this.currentRule.target} ${protocol} ${source} ${destination}"; echo ""; echo "测试连接..."; echo "⚠️ 实际测试需要根据具体规则进行"`,
+        command: `echo "=== 测试规则 ==="; echo ""; printf '规则: %s %s %s %s %s\\n' ${shellQuote(chain)} ${shellQuote(target)} ${shellQuote(protocol)} ${shellQuote(source)} ${shellQuote(destination)}; echo ""; echo "测试连接..."; echo "⚠️ 实际测试需要根据具体规则进行"`,
         title: '测试规则',
         actionName: '测试规则',
       },

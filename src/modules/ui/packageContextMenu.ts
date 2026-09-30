@@ -4,6 +4,7 @@
 
 import * as IconPark from '@icon-park/svg'
 import { BaseContextMenu, type MenuAction } from './contextMenu/baseContextMenu'
+import { isSafePackageName } from '../utils/shellSafety'
 
 export class PackageContextMenu extends BaseContextMenu {
   private currentPkg: any = {}
@@ -125,6 +126,10 @@ export class PackageContextMenu extends BaseContextMenu {
 
   protected resolveAction(action: string): MenuAction | null {
     const name = this.currentPkg.name || ''
+    if (!isSafePackageName(name)) {
+      this.showModal('错误', '软件包名无效，已拒绝执行远端命令')
+      return null
+    }
 
     const actions: Record<string, MenuAction> = {
       'package-details': {

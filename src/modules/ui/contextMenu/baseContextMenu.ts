@@ -6,6 +6,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import * as IconPark from '@icon-park/svg'
 import { aiService } from '../../ai/aiService'
+import { showConfirm } from '../confirmDialog'
 
 export interface MenuAction {
   command: string
@@ -524,6 +525,10 @@ export abstract class BaseContextMenu {
 
   // ===== 命令执行 =====
 
+  private requiresConfirmation(action: string): boolean {
+    return /(^|[-_])(delete|remove|kill|stop|restart|reload|start|enable|disable|mask|lock|unlock|block|allow|whitelist|quarantine|blacklist|hold|run-now|comment-line|open-port|close-port|set-default|set-drop|set-accept|rate-limit|port-forward|scale|rollback|cordon|uncordon|drain|restore|save)([-_]|$)/.test(action)
+  }
+
   protected async executeAction(action: string) {
     // AI 解释该条目 — 通用处理
     if (action === '__ai_explain_row__') {
@@ -543,6 +548,15 @@ export abstract class BaseContextMenu {
     }
 
     const { command, title, actionName } = resolved
+
+    if (this.requiresConfirmation(action)) {
+      const confirmed = await showConfirm({
+        title: `确认${actionName}`,
+        message: `该操作可能修改远程系统状态。确定继续吗？\n\n${command.substring(0, 500)}`,
+        dangerous: true,
+      })
+      if (!confirmed) return
+    }
 
     try {
       const userInfo = this.selectedUsername ? ` (用户: ${this.selectedUsername})` : ''

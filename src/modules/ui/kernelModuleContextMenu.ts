@@ -4,6 +4,7 @@
 
 import * as IconPark from '@icon-park/svg'
 import { BaseContextMenu, type MenuAction } from './contextMenu/baseContextMenu'
+import { isSafeKernelModule } from '../utils/shellSafety'
 
 export class KernelModuleContextMenu extends BaseContextMenu {
   private currentModule: any = {}
@@ -131,6 +132,10 @@ export class KernelModuleContextMenu extends BaseContextMenu {
 
   protected resolveAction(action: string): MenuAction | null {
     const name = this.currentModule.name || ''
+    if (!isSafeKernelModule(name)) {
+      this.showModal('错误', '内核模块名无效，已拒绝执行远端命令')
+      return null
+    }
 
     const actions: Record<string, MenuAction> = {
       'module-info': {

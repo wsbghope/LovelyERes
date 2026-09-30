@@ -4,6 +4,7 @@
 
 import * as IconPark from '@icon-park/svg'
 import { BaseContextMenu, type MenuAction } from './contextMenu/baseContextMenu'
+import { isSafePid } from '../utils/shellSafety'
 
 export class ProcessContextMenu extends BaseContextMenu {
   private currentPid: string = ''
@@ -349,6 +350,10 @@ export class ProcessContextMenu extends BaseContextMenu {
 
   protected resolveAction(action: string): MenuAction | null {
     const pid = this.currentPid
+    if (!isSafePid(pid)) {
+      this.showModal('错误', '进程 ID 无效，已拒绝执行远端命令')
+      return null
+    }
     const actions: Record<string, MenuAction> = {
       'cmdline': { command: `cat /proc/${pid}/cmdline | tr '\\0' ' '`, title: `进程 ${pid} - 命令行参数`, actionName: '获取命令行参数' },
       'exe': { command: `ls -l /proc/${pid}/exe 2>/dev/null || echo "无法访问"`, title: `进程 ${pid} - 可执行路径`, actionName: '获取可执行路径' },

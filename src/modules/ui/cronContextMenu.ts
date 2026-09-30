@@ -4,6 +4,7 @@
 
 import * as IconPark from '@icon-park/svg'
 import { BaseContextMenu, type MenuAction } from './contextMenu/baseContextMenu'
+import { isSafeLinuxUsername, shellQuote } from '../utils/shellSafety'
 
 export class CronContextMenu extends BaseContextMenu {
   private currentCron: {
@@ -260,53 +261,69 @@ export class CronContextMenu extends BaseContextMenu {
     if (!this.currentCron) return null
 
     const { user, schedule, command, source } = this.currentCron
+    if (!isSafeLinuxUsername(user)
+      || schedule.length > 256
+      || command.length === 0
+      || command.length > 8192
+      || source.length > 4096
+      || /[\r\n]/.test(user + source)) {
+      return null
+    }
 
-    const actions: Record<string, MenuAction | (() => MenuAction)> = {
+    const qUser = shellQuote(user)
+    const qSchedule = shellQuote(schedule)
+    const qCommand = shellQuote(command)
+    const commandName = command.trim().split(/\s+/, 1)[0] || ''
+    const qCommandName = shellQuote(commandName)
+    const qSource = shellQuote(source)
+
+    const actions: Record<string, MenuAction | (() => MenuAction | null)> = {
       // 源文件操作
       'view-source': () => {
         if (source && source.startsWith('/')) {
-          return { command: `echo "=== 源文件: ${source} ==="; echo ""; cat "${source}" 2>&1 || echo "无法读取文件"`, title: `源文件 - ${source}`, actionName: '查看源文件' }
+          return { command: `echo "=== 源文件 ==="; printf '%s\\n' ${qSource}; echo ""; cat -- ${qSource} 2>&1 || echo "无法读取文件"`, title: `源文件 - ${source}`, actionName: '查看源文件' }
         } else {
           const u = source.split(':')[1]
-          return { command: `echo "=== 用户Crontab: ${u} ==="; echo ""; crontab -u ${u} -l`, title: `用户Crontab - ${u}`, actionName: '查看源文件' }
+          if (!u || !isSafeLinuxUsername(u)) return null
+          return { command: `echo "=== 用户Crontab ==="; printf '%s\\n' ${shellQuote(u)}; echo ""; crontab -u ${shellQuote(u)} -l`, title: `用户Crontab - ${u}`, actionName: '查看源文件' }
         }
       },
       'delete-task-file': {
-        command: `echo "正在删除文件: ${source}"; rm -f "${source}" && echo "✓ 删除成功" || echo "✗ 删除失败"`,
+        command: `echo "正在删除任务文件"; printf '%s\\n' ${qSource}; rm -f -- ${qSource} && echo "✓ 删除成功" || echo "✗ 删除失败"`,
         title: `删除任务文件 - ${source}`,
         actionName: '删除任务文件'
       },
 
       // 基本信息
       'details': {
-        command: `echo "=== 计划任务详情 ==="; echo ""; echo "用户: ${user}"; echo "时间表: ${schedule}"; echo "命令: ${command}"; echo ""; echo "=== 任务状态 ==="; crontab -u ${user} -l 2>/dev/null | grep -F "${command}" || echo "任务可能已被删除或修改"`,
+        command: `echo "=== 计划任务详情 ==="; echo ""; printf '用户: %s\\n时间表: %s\\n命令: %s\\n' ${qUser} ${qSchedule} ${qCommand}; echo ""; echo "=== 任务状态 ==="; crontab -u ${qUser} -l 2>/dev/null | grep -F -- ${qCommand} || echo "任务可能已被删除或修改"`,
         title: `计划任务详情 - ${user}`,
         actionName: '查看任务详情'
       },
       'schedule': {
-        command: `echo "=== 执行时间表分析 ==="; echo ""; echo "Cron表达式: ${schedule}"; echo ""; echo "字段说明:"; echo "分钟(0-59) 小时(0-23) 日(1-31) 月(1-12) 星期(0-7)"; echo ""; echo "当前表达式解析:"; echo "${schedule}" | awk '{print "分钟: "$1; print "小时: "$2; print "日期: "$3; print "月份: "$4; print "星期: "$5}'`,
+        command: `echo "=== 执行时间表分析 ==="; echo ""; printf 'Cron表达式: %s\\n' ${qSchedule}; echo ""; echo "字段说明:"; echo "分钟(0-59) 小时(0-23) 日(1-31) 月(1-12) 星期(0-7)"; echo ""; echo "当前表达式解析:"; printf '%s\\n' ${qSchedule} | awk '{print "分钟: "$1; print "小时: "$2; print "日期: "$3; print "月份: "$4; print "星期: "$5}'`,
         title: `执行时间表 - ${schedule}`,
         actionName: '查看执行时间表'
       },
       'command': {
-        command: `echo "=== 执行命令 ==="; echo ""; echo "${command}"; echo ""; echo "=== 命令分析 ==="; which ${command.split(' ')[0]} 2>/dev/null || echo "命令路径: 未找到或不在PATH中"`,
+        command: `echo "=== 执行命令 ==="; echo ""; printf '%s\\n' ${qCommand}; echo ""; echo "=== 命令分析 ==="; command -v -- ${qCommandName} 2>/dev/null || echo "命令路径: 未找到或不在PATH中"`,
         title: `执行命令 - ${command.substring(0, 120)}...`,
         actionName: '查看执行命令'
       },
 
       // 任务管理
       'run-now': {
-        command: `echo "立即执行计划任务"; echo ""; echo "用户: ${user}"; echo "命令: ${command}"; echo ""; echo "执行中..."; echo ""; ${command}`,
+        command: `echo "立即执行计划任务"; echo ""; printf '用户: %s\\n命令: %s\\n' ${qUser} ${qCommand}; echo ""; echo "执行中..."; echo ""; sh -c ${qCommand}`,
         title: `立即执行 - ${command.substring(0, 120)}...`,
         actionName: '立即执行任务'
       },
       'test-command': {
-        command: `echo "=== 测试命令 ==="; echo ""; echo "命令: ${command}"; echo ""; echo "检查命令语法..."; bash -n -c "${command}" 2>&1 && echo "✓ 语法检查通过" || echo "✗ 语法错误"; echo ""; echo "⚠️ 提示：这只是语法检查，实际执行可能需要其他条件"`,
+        command: `echo "=== 测试命令 ==="; echo ""; printf '命令: %s\\n' ${qCommand}; echo ""; echo "检查命令语法..."; bash -n -c ${qCommand} 2>&1 && echo "✓ 语法检查通过" || echo "✗ 语法错误"; echo ""; echo "⚠️ 提示：这只是语法检查，实际执行可能需要其他条件"`,
         title: `测试命令 - ${command.substring(0, 120)}...`,
         actionName: '测试命令'
       },
       'view-crontab': {
-        command: `crontab -u ${user} -l 2>/dev/null || echo "用户 ${user} 没有crontab"`,
+        command: `crontab -u ${qUser} -l 2>/dev/null || printf '用户 %s 没有crontab\\n' ${qUser}`,
         title: `完整crontab - ${user}`,
         actionName: '查看完整crontab'
       },

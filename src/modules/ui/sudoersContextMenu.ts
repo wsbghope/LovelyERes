@@ -4,6 +4,7 @@
 
 import * as IconPark from '@icon-park/svg'
 import { BaseContextMenu, type MenuAction } from './contextMenu/baseContextMenu'
+import { isSafeLinuxUsername, shellQuote } from '../utils/shellSafety'
 
 export class SudoersContextMenu extends BaseContextMenu {
   private currentEntry: any = {}
@@ -128,6 +129,13 @@ export class SudoersContextMenu extends BaseContextMenu {
     const entry = this.currentEntry
     const user = entry.user || ''
     const source = entry.source || '/etc/sudoers'
+    const userActions = new Set(['user-permissions', 'user-sudo-history', 'user-groups'])
+    if (userActions.has(action) && !isSafeLinuxUsername(user)) {
+      this.showModal('错误', 'Sudoers 用户名无效，已拒绝执行远端命令')
+      return null
+    }
+    const quotedUser = shellQuote(user)
+    const quotedSource = shellQuote(source)
 
     const actions: Record<string, MenuAction> = {
       'view-sudoers': {
@@ -136,7 +144,7 @@ export class SudoersContextMenu extends BaseContextMenu {
         actionName: '查看sudoers'
       },
       'view-source-file': {
-        command: `cat ${source} 2>/dev/null || echo '文件不存在或无权限'`,
+        command: `cat -- ${quotedSource} 2>/dev/null || echo '文件不存在或无权限'`,
         title: `配置来源 - ${source}`,
         actionName: '查看配置来源'
       },
@@ -151,17 +159,17 @@ export class SudoersContextMenu extends BaseContextMenu {
         actionName: '列出sudoers.d'
       },
       'user-permissions': {
-        command: `sudo -l -U ${user} 2>/dev/null || echo '无法查看权限'`,
+        command: `sudo -l -U ${quotedUser} 2>/dev/null || echo '无法查看权限'`,
         title: `权限 - ${user}`,
         actionName: '查看用户权限'
       },
       'user-sudo-history': {
-        command: `grep "${user}" /var/log/auth.log 2>/dev/null | grep sudo | tail -30 || journalctl _COMM=sudo | grep "${user}" | tail -30`,
+        command: `grep -F -- ${quotedUser} /var/log/auth.log 2>/dev/null | grep sudo | tail -30 || journalctl _COMM=sudo | grep -F -- ${quotedUser} | tail -30`,
         title: `sudo历史 - ${user}`,
         actionName: '查看sudo历史'
       },
       'user-groups': {
-        command: `id ${user} && echo '---' && groups ${user}`,
+        command: `id -- ${quotedUser} && echo '---' && groups -- ${quotedUser}`,
         title: `组信息 - ${user}`,
         actionName: '查看用户组'
       },
