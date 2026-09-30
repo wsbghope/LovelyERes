@@ -194,7 +194,7 @@ async function refreshLogAnalysis(): Promise<void> {
   } catch (error) {
     console.error('刷新日志失败:', error);
     const logContainer = document.getElementById('log-container');
-    if (logContainer) logContainer.innerHTML = `<div class="error-state"><p>加载日志失败</p><small>${error}</small></div>`;
+    if (logContainer) logContainer.innerHTML = `<div class="error-state"><p>加载日志失败</p><small>${escapeHtml(String(error))}</small></div>`;
   }
 }
 
@@ -274,7 +274,7 @@ async function runMultiLogAnalysis(): Promise<void> {
     window.showNotification?.('关联分析完成', 'success');
   } catch (error) {
     console.error('关联分析失败:', error);
-    logContainer.innerHTML = `<div class="error-state"><p>关联分析失败</p><small>${error}</small></div>`;
+    logContainer.innerHTML = `<div class="error-state"><p>关联分析失败</p><small>${escapeHtml(String(error))}</small></div>`;
   }
 }
 

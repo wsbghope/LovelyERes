@@ -97,7 +97,7 @@ export class LogContextMenu extends BaseContextMenu {
         }
       )
     } catch (error) {
-      explanationContentEl.innerHTML = `<span style="color: var(--error-color)">❌ 分析失败: ${error instanceof Error ? error.message : String(error)}</span><br><br><small>请检查 设置 -> AI 配置 是否正确。</small>`
+      explanationContentEl.textContent = `❌ 分析失败: ${error instanceof Error ? error.message : String(error)}\n\n请检查 设置 -> AI 配置 是否正确。`
     }
   }
 }

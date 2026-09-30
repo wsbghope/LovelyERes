@@ -209,13 +209,13 @@ function updateNetworkTable(networkDetails: any[]): void {
     const isSuspiciousConn = isEstablished && !standardPorts.some(p => (conn.foreignAddress || '').endsWith(p)) && conn.foreignAddress && conn.foreignAddress !== '*:*' && conn.foreignAddress !== '0.0.0.0:*';
     const rowBg = isSuspiciousConn ? 'background: #faad1408; border-left: 2px solid #faad14;' : '';
     return `
-    <tr class="network-row" data-protocol="${conn.protocol}" data-local="${conn.localAddress}" data-foreign="${conn.foreignAddress}" data-state="${conn.state}" data-pid="${conn.pid || '-'}" data-process="${conn.process}" style="border-bottom: 1px solid var(--border-color); cursor: context-menu; ${rowBg}">
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${conn.protocol}</td>
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${conn.localAddress}</td>
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${conn.foreignAddress}</td>
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${conn.state}</td>
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${conn.pid || '-'}</td>
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary);">${conn.process}</td>
+    <tr class="network-row" data-protocol="${attrEsc(conn.protocol)}" data-local="${attrEsc(conn.localAddress)}" data-foreign="${attrEsc(conn.foreignAddress)}" data-state="${attrEsc(conn.state)}" data-pid="${attrEsc(conn.pid || '-')}" data-process="${attrEsc(conn.process)}" style="border-bottom: 1px solid var(--border-color); cursor: context-menu; ${rowBg}">
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${htmlEsc(conn.protocol)}</td>
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${htmlEsc(conn.localAddress)}</td>
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${htmlEsc(conn.foreignAddress)}</td>
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${htmlEsc(conn.state)}</td>
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${htmlEsc(conn.pid || '-')}</td>
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary);">${htmlEsc(conn.process)}</td>
     </tr>`;
   }).join('');
 
@@ -245,18 +245,18 @@ function updateServicesTable(services: any[]): void {
     const statuses = [...new Set(services.map(s => s.status))].sort();
     const currentValue = statusFilter.value;
     statusFilter.innerHTML = '<option value="">所有状态</option>' +
-      statuses.map(status => `<option value="${status}">${status}</option>`).join('');
+      statuses.map(status => `<option value="${attrEsc(status)}">${htmlEsc(status)}</option>`).join('');
     statusFilter.value = currentValue;
   }
 
   tbody.innerHTML = services.map((service) => `
-    <tr data-service-name="${service.name}" style="border-bottom: 1px solid var(--border-color); cursor: context-menu;">
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${service.name}</td>
+    <tr data-service-name="${attrEsc(service.name)}" style="border-bottom: 1px solid var(--border-color); cursor: context-menu;">
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${htmlEsc(service.name)}</td>
       <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">
-        <span style="color: ${service.status === 'active' ? 'var(--success-color)' : 'var(--error-color)'};">${service.status}</span>
+        <span style="color: ${service.status === 'active' ? 'var(--success-color)' : 'var(--error-color)'};">${htmlEsc(service.status)}</span>
       </td>
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${service.enabled}</td>
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${service.description}">${service.description}</td>
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${htmlEsc(service.enabled)}</td>
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${attrEsc(service.description)}">${htmlEsc(service.description)}</td>
     </tr>
   `).join('');
 
@@ -280,7 +280,7 @@ function updateUsersTable(users: any[]): void {
     const shells = [...new Set(users.map(u => u.shell))].sort();
     const currentValue = shellFilter.value;
     shellFilter.innerHTML = '<option value="">所有Shell</option>' +
-      shells.map(shell => `<option value="${shell}">${shell}</option>`).join('');
+      shells.map(shell => `<option value="${attrEsc(shell)}">${htmlEsc(shell)}</option>`).join('');
     shellFilter.value = currentValue;
   }
 
@@ -291,12 +291,12 @@ function updateUsersTable(users: any[]): void {
     const uidColor = isRoot ? '#ff4d4f; font-weight: 600' : 'var(--text-primary)';
     const shellColor = hasLoginShell ? 'var(--text-primary); font-weight: 500' : 'var(--text-secondary)';
     return `
-    <tr data-username="${user.username}" style="border-bottom: 1px solid var(--border-color); cursor: context-menu; ${rowStyle}">
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${user.username}${isRoot ? ' <span style="color:#ff4d4f;font-size:10px;">⚠️UID=0</span>' : ''}</td>
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: ${uidColor}; border-right: 1px solid var(--border-color-light);">${user.uid}</td>
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${user.gid}</td>
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${user.home}</td>
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: ${shellColor};">${user.shell}</td>
+    <tr data-username="${attrEsc(user.username)}" style="border-bottom: 1px solid var(--border-color); cursor: context-menu; ${rowStyle}">
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${htmlEsc(user.username)}${isRoot ? ' <span style="color:#ff4d4f;font-size:10px;">⚠️UID=0</span>' : ''}</td>
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: ${uidColor}; border-right: 1px solid var(--border-color-light);">${htmlEsc(user.uid)}</td>
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${htmlEsc(user.gid)}</td>
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${htmlEsc(user.home)}</td>
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: ${shellColor};">${htmlEsc(user.shell)}</td>
     </tr>`;
   }).join('');
 
@@ -316,13 +316,13 @@ function updateAutostartTable(autostart: any[]): void {
   }
 
   tbody.innerHTML = autostart.map((item) => `
-    <tr data-startup-name="${item.name}" data-startup-type="${item.type}" data-startup-path="${item.path || ''}" data-startup-command="${item.command}" style="border-bottom: 1px solid var(--border-color); cursor: context-menu;">
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${item.name}</td>
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-right: 1px solid var(--border-color-light);" title="${item.command}">${item.command}</td>
+    <tr data-startup-name="${attrEsc(item.name)}" data-startup-type="${attrEsc(item.type)}" data-startup-path="${attrEsc(item.path || '')}" data-startup-command="${attrEsc(item.command)}" style="border-bottom: 1px solid var(--border-color); cursor: context-menu;">
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${htmlEsc(item.name)}</td>
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-right: 1px solid var(--border-color-light);" title="${attrEsc(item.command)}">${htmlEsc(item.command)}</td>
       <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">
-        <span style="color: ${item.status === 'enabled' ? 'var(--success-color)' : 'var(--error-color)'};">${item.status}</span>
+        <span style="color: ${item.status === 'enabled' ? 'var(--success-color)' : 'var(--error-color)'};">${htmlEsc(item.status)}</span>
       </td>
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary);">${item.type}</td>
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary);">${htmlEsc(item.type)}</td>
     </tr>
   `).join('');
 
@@ -350,10 +350,10 @@ function updateCronTable(cronJobs: any[]): void {
     const isSuspicious = suspiciousPatterns.some(p => (job.command || '').toLowerCase().includes(p));
     const rowStyle = isSuspicious ? 'background: #ff4d4f08; border-left: 3px solid #ff4d4f;' : '';
     return `
-    <tr data-cron-user="${job.user}" data-cron-schedule="${job.schedule}" data-cron-command="${job.command}" data-cron-source="${job.source || ''}" style="border-bottom: 1px solid var(--border-color); cursor: context-menu; ${rowStyle}">
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${job.user}</td>
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); font-family: monospace; border-right: 1px solid var(--border-color-light);">${job.schedule}</td>
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${job.command}">${isSuspicious ? '⚠️ ' : ''}${job.command}</td>
+    <tr data-cron-user="${attrEsc(job.user)}" data-cron-schedule="${attrEsc(job.schedule)}" data-cron-command="${attrEsc(job.command)}" data-cron-source="${attrEsc(job.source || '')}" style="border-bottom: 1px solid var(--border-color); cursor: context-menu; ${rowStyle}">
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${htmlEsc(job.user)}</td>
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); font-family: monospace; border-right: 1px solid var(--border-color-light);">${htmlEsc(job.schedule)}</td>
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${attrEsc(job.command)}">${isSuspicious ? '⚠️ ' : ''}${htmlEsc(job.command)}</td>
     </tr>`;
   }).join('');
 
@@ -381,13 +381,13 @@ function updateFirewallTable(firewallRules: any[]): void {
   }
 
   tbody.innerHTML = firewallRules.map((rule) => `
-    <tr data-chain="${rule.chain}" data-target="${rule.target}" data-protocol="${rule.protocol}" data-source="${rule.source}" data-destination="${rule.destination}" data-options="${rule.options}" style="border-bottom: 1px solid var(--border-color); cursor: context-menu;">
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${rule.chain}</td>
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${rule.target}</td>
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${rule.protocol}</td>
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${rule.source}</td>
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${rule.destination}</td>
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${rule.options}">${rule.options}</td>
+    <tr data-chain="${attrEsc(rule.chain)}" data-target="${attrEsc(rule.target)}" data-protocol="${attrEsc(rule.protocol)}" data-source="${attrEsc(rule.source)}" data-destination="${attrEsc(rule.destination)}" data-options="${attrEsc(rule.options)}" style="border-bottom: 1px solid var(--border-color); cursor: context-menu;">
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${htmlEsc(rule.chain)}</td>
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${htmlEsc(rule.target)}</td>
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${htmlEsc(rule.protocol)}</td>
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${htmlEsc(rule.source)}</td>
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${htmlEsc(rule.destination)}</td>
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${attrEsc(rule.options)}">${htmlEsc(rule.options)}</td>
     </tr>
   `).join('');
 
@@ -434,12 +434,12 @@ function updateSSHKeysTable(sshKeys: any[]): void {
     return;
   }
   tbody.innerHTML = sshKeys.map((key) => `
-    <tr data-sshkey-user="${key.user}" data-sshkey-type="${key.keyType}" data-sshkey-content="${key.keyContent}" data-sshkey-comment="${key.comment || ''}" data-sshkey-file="${key.file}" style="border-bottom: 1px solid var(--border-color); cursor: context-menu;">
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light); font-weight: 600;">${key.user}</td>
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light); font-family: monospace;">${key.keyType}</td>
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light); font-family: monospace; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${key.keyContent}">${key.keyContent}</td>
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-secondary); border-right: 1px solid var(--border-color-light);">${key.comment || '-'}</td>
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-secondary); font-family: monospace;">${key.file}</td>
+    <tr data-sshkey-user="${attrEsc(key.user)}" data-sshkey-type="${attrEsc(key.keyType)}" data-sshkey-content="${attrEsc(key.keyContent)}" data-sshkey-comment="${attrEsc(key.comment || '')}" data-sshkey-file="${attrEsc(key.file)}" style="border-bottom: 1px solid var(--border-color); cursor: context-menu;">
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light); font-weight: 600;">${htmlEsc(key.user)}</td>
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light); font-family: monospace;">${htmlEsc(key.keyType)}</td>
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light); font-family: monospace; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${attrEsc(key.keyContent)}">${htmlEsc(key.keyContent)}</td>
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-secondary); border-right: 1px solid var(--border-color-light);">${htmlEsc(key.comment || '-')}</td>
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-secondary); font-family: monospace;">${htmlEsc(key.file)}</td>
     </tr>
   `).join('');
 
@@ -466,11 +466,11 @@ function updateLoginHistoryTable(loginHistory: any[]): void {
     const statusLabel = entry.status === 'failed' ? '❌ 失败' : entry.status === 'active' ? '🟢 在线' : '登录';
     const rowBg = entry.status === 'failed' ? 'background: #ff4d4f08;' : '';
     return `
-    <tr data-login-user="${entry.user}" data-login-terminal="${entry.terminal}" data-login-source="${entry.source}" data-login-time="${entry.loginTime}" data-login-status="${entry.status}" style="border-bottom: 1px solid var(--border-color); ${rowBg} cursor: context-menu;">
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light); font-weight: 600;">${entry.user}</td>
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light); font-family: monospace;">${entry.terminal}</td>
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${entry.source}</td>
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${entry.loginTime}</td>
+    <tr data-login-user="${attrEsc(entry.user)}" data-login-terminal="${attrEsc(entry.terminal)}" data-login-source="${attrEsc(entry.source)}" data-login-time="${attrEsc(entry.loginTime)}" data-login-status="${attrEsc(entry.status)}" style="border-bottom: 1px solid var(--border-color); ${rowBg} cursor: context-menu;">
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light); font-weight: 600;">${htmlEsc(entry.user)}</td>
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light); font-family: monospace;">${htmlEsc(entry.terminal)}</td>
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${htmlEsc(entry.source)}</td>
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${htmlEsc(entry.loginTime)}</td>
       <td style="padding: var(--spacing-sm); font-size: 12px; color: ${statusColor}; font-weight: 500;">${statusLabel}</td>
     </tr>`;
   }).join('');
@@ -494,12 +494,12 @@ function updateSUIDFilesTable(suidFiles: any[]): void {
     return;
   }
   tbody.innerHTML = suidFiles.map((file) => `
-    <tr data-suid-path="${file.path}" data-suid-perms="${file.permissions}" data-suid-owner="${file.owner}" data-suid-risk="${file.risk}" style="border-bottom: 1px solid var(--border-color); ${riskRowStyle(file.risk)} cursor: context-menu;">
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light); font-family: monospace; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${file.path}">${file.path}</td>
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light); font-family: monospace;">${file.permissions}</td>
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${file.owner}</td>
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${file.size}</td>
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${file.modified}</td>
+    <tr data-suid-path="${attrEsc(file.path)}" data-suid-perms="${attrEsc(file.permissions)}" data-suid-owner="${attrEsc(file.owner)}" data-suid-risk="${attrEsc(file.risk)}" style="border-bottom: 1px solid var(--border-color); ${riskRowStyle(file.risk)} cursor: context-menu;">
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light); font-family: monospace; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${attrEsc(file.path)}">${htmlEsc(file.path)}</td>
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light); font-family: monospace;">${htmlEsc(file.permissions)}</td>
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${htmlEsc(file.owner)}</td>
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${htmlEsc(file.size)}</td>
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${htmlEsc(file.modified)}</td>
       <td style="padding: var(--spacing-sm); font-size: 12px;">${renderRiskBadge(file.risk)}</td>
     </tr>
   `).join('');
@@ -522,9 +522,9 @@ function updateEnvVariablesTable(envVariables: any[]): void {
     return;
   }
   tbody.innerHTML = envVariables.map((v) => `
-    <tr data-env-name="${v.name}" data-env-risk="${v.risk}" style="border-bottom: 1px solid var(--border-color); ${riskRowStyle(v.risk)} cursor: context-menu;">
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light); font-weight: 600; font-family: monospace; white-space: nowrap;">${v.name}</td>
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light); font-family: monospace; max-width: 500px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${v.value}">${v.value}</td>
+    <tr data-env-name="${attrEsc(v.name)}" data-env-risk="${attrEsc(v.risk)}" style="border-bottom: 1px solid var(--border-color); ${riskRowStyle(v.risk)} cursor: context-menu;">
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light); font-weight: 600; font-family: monospace; white-space: nowrap;">${htmlEsc(v.name)}</td>
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light); font-family: monospace; max-width: 500px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${attrEsc(v.value)}">${htmlEsc(v.value)}</td>
       <td style="padding: var(--spacing-sm); font-size: 12px;">${renderRiskBadge(v.risk)}</td>
     </tr>
   `).join('');
@@ -715,11 +715,11 @@ function updateInstalledPackagesTable(installedPackages: any[]): void {
     return;
   }
   tbody.innerHTML = installedPackages.map((pkg) => `
-    <tr data-pkg-name="${pkg.name}" data-pkg-version="${pkg.version || ''}" data-pkg-time="${pkg.installTime}" data-pkg-source="${pkg.source}" style="border-bottom: 1px solid var(--border-color); cursor: context-menu;">
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light); font-weight: 500;">${pkg.name}</td>
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light); font-family: monospace;">${pkg.version || '-'}</td>
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${pkg.installTime}</td>
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-secondary);">${pkg.source}</td>
+    <tr data-pkg-name="${attrEsc(pkg.name)}" data-pkg-version="${attrEsc(pkg.version || '')}" data-pkg-time="${attrEsc(pkg.installTime)}" data-pkg-source="${attrEsc(pkg.source)}" style="border-bottom: 1px solid var(--border-color); cursor: context-menu;">
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light); font-weight: 500;">${htmlEsc(pkg.name)}</td>
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light); font-family: monospace;">${htmlEsc(pkg.version || '-')}</td>
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${htmlEsc(pkg.installTime)}</td>
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-secondary);">${htmlEsc(pkg.source)}</td>
     </tr>
   `).join('');
 
@@ -745,12 +745,12 @@ function updateSudoersTable(sudoersConfig: any[]): void {
     const isAllCmd = entry.command.includes('ALL');
     const risk = isNopasswd && isAllCmd ? 'high' : isNopasswd ? 'warning' : 'normal';
     return `
-    <tr data-sudoer-user="${entry.user}" data-sudoer-host="${entry.host}" data-sudoer-nopasswd="${entry.nopasswd}" data-sudoer-source="${entry.source}" style="border-bottom: 1px solid var(--border-color); ${riskRowStyle(risk)} cursor: context-menu;">
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light); font-weight: 600;">${entry.user}</td>
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${entry.host}</td>
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light); font-family: monospace; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${entry.command}">${entry.command}</td>
+    <tr data-sudoer-user="${attrEsc(entry.user)}" data-sudoer-host="${attrEsc(entry.host)}" data-sudoer-nopasswd="${attrEsc(entry.nopasswd)}" data-sudoer-source="${attrEsc(entry.source)}" style="border-bottom: 1px solid var(--border-color); ${riskRowStyle(risk)} cursor: context-menu;">
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light); font-weight: 600;">${htmlEsc(entry.user)}</td>
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${htmlEsc(entry.host)}</td>
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light); font-family: monospace; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${attrEsc(entry.command)}">${htmlEsc(entry.command)}</td>
       <td style="padding: var(--spacing-sm); font-size: 12px; color: ${isNopasswd ? '#ff4d4f' : 'var(--text-primary)'}; font-weight: ${isNopasswd ? '600' : '400'}; border-right: 1px solid var(--border-color-light);">${isNopasswd ? '⚠️ 免密' : '需要密码'}</td>
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-secondary); font-family: monospace;">${entry.source}</td>
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-secondary); font-family: monospace;">${htmlEsc(entry.source)}</td>
     </tr>`;
   }).join('');
 
@@ -773,12 +773,12 @@ function updateSystemdTimersTable(systemdTimers: any[]): void {
     return;
   }
   tbody.innerHTML = systemdTimers.map((timer) => `
-    <tr data-timer-name="${timer.timer}" data-timer-next="${timer.next}" data-timer-left="${timer.left}" data-timer-last="${timer.last}" data-timer-activates="${timer.activates}" style="border-bottom: 1px solid var(--border-color); cursor: context-menu;">
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light); font-weight: 500;">${timer.timer}</td>
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${timer.next}</td>
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${timer.left}</td>
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${timer.last}</td>
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); font-family: monospace;">${timer.activates}</td>
+    <tr data-timer-name="${attrEsc(timer.timer)}" data-timer-next="${attrEsc(timer.next)}" data-timer-left="${attrEsc(timer.left)}" data-timer-last="${attrEsc(timer.last)}" data-timer-activates="${attrEsc(timer.activates)}" style="border-bottom: 1px solid var(--border-color); cursor: context-menu;">
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light); font-weight: 500;">${htmlEsc(timer.timer)}</td>
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${htmlEsc(timer.next)}</td>
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${htmlEsc(timer.left)}</td>
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${htmlEsc(timer.last)}</td>
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); font-family: monospace;">${htmlEsc(timer.activates)}</td>
     </tr>
   `).join('');
 
@@ -801,10 +801,10 @@ function updateKernelModulesTable(kernelModules: any[]): void {
     return;
   }
   tbody.innerHTML = kernelModules.map((mod) => `
-    <tr data-module-name="${mod.name}" data-module-size="${mod.size}" data-module-usedby="${mod.usedBy}" data-module-risk="${mod.risk}" style="border-bottom: 1px solid var(--border-color); ${riskRowStyle(mod.risk)} cursor: context-menu;">
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light); font-weight: 500; font-family: monospace;">${mod.name}</td>
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${mod.size}</td>
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${mod.usedBy}</td>
+    <tr data-module-name="${attrEsc(mod.name)}" data-module-size="${attrEsc(mod.size)}" data-module-usedby="${attrEsc(mod.usedBy)}" data-module-risk="${attrEsc(mod.risk)}" style="border-bottom: 1px solid var(--border-color); ${riskRowStyle(mod.risk)} cursor: context-menu;">
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light); font-weight: 500; font-family: monospace;">${htmlEsc(mod.name)}</td>
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${htmlEsc(mod.size)}</td>
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${htmlEsc(mod.usedBy)}</td>
       <td style="padding: var(--spacing-sm); font-size: 12px;">${renderRiskBadge(mod.risk)}</td>
     </tr>
   `).join('');
@@ -827,11 +827,11 @@ function updateRecentFilesTable(recentFiles: any[]): void {
     return;
   }
   tbody.innerHTML = recentFiles.map((file) => `
-    <tr data-file-path="${file.path}" data-file-modified="${file.modified}" data-file-size="${file.size}" data-file-owner="${file.owner}" data-file-risk="${file.risk}" style="border-bottom: 1px solid var(--border-color); ${riskRowStyle(file.risk)} cursor: context-menu;">
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light); font-family: monospace; max-width: 350px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${file.path}">${file.path}</td>
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${file.modified}</td>
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${file.size}</td>
-      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${file.owner}</td>
+    <tr data-file-path="${attrEsc(file.path)}" data-file-modified="${attrEsc(file.modified)}" data-file-size="${attrEsc(file.size)}" data-file-owner="${attrEsc(file.owner)}" data-file-risk="${attrEsc(file.risk)}" style="border-bottom: 1px solid var(--border-color); ${riskRowStyle(file.risk)} cursor: context-menu;">
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light); font-family: monospace; max-width: 350px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${attrEsc(file.path)}">${htmlEsc(file.path)}</td>
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${htmlEsc(file.modified)}</td>
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${htmlEsc(file.size)}</td>
+      <td style="padding: var(--spacing-sm); font-size: 12px; color: var(--text-primary); border-right: 1px solid var(--border-color-light);">${htmlEsc(file.owner)}</td>
       <td style="padding: var(--spacing-sm); font-size: 12px;">${renderRiskBadge(file.risk)}</td>
     </tr>
   `).join('');
@@ -858,12 +858,12 @@ function updateDockerTable(containers: any[]): void {
   tbody.innerHTML = containers.map((c: any) => {
     const isUp = (c.status || '').toLowerCase().includes('up');
     return `<tr>
-      <td style="font-family:monospace;font-size:11px;">${c.id || ''}</td>
-      <td><strong>${c.name || ''}</strong></td>
-      <td style="font-size:11px;color:var(--text-secondary);">${c.image || ''}</td>
-      <td><span class="status-badge ${isUp ? 'running' : 'stopped'}">${c.status || ''}</span></td>
-      <td style="font-size:11px;">${c.ports || ''}</td>
-      <td style="font-size:11px;color:var(--text-secondary);">${c.created || ''}</td>
+      <td style="font-family:monospace;font-size:11px;">${htmlEsc(c.id || '')}</td>
+      <td><strong>${htmlEsc(c.name || '')}</strong></td>
+      <td style="font-size:11px;color:var(--text-secondary);">${htmlEsc(c.image || '')}</td>
+      <td><span class="status-badge ${isUp ? 'running' : 'stopped'}">${htmlEsc(c.status || '')}</span></td>
+      <td style="font-size:11px;">${htmlEsc(c.ports || '')}</td>
+      <td style="font-size:11px;color:var(--text-secondary);">${htmlEsc(c.created || '')}</td>
     </tr>`;
   }).join('');
 }
@@ -879,12 +879,12 @@ function updateKubernetesTable(pods: any[]): void {
   tbody.innerHTML = pods.map((p: any) => {
     const isRunning = (p.status || '').toLowerCase() === 'running';
     return `<tr>
-      <td style="font-size:11px;">${p.namespace || ''}</td>
-      <td><strong>${p.name || ''}</strong></td>
-      <td>${p.ready || ''}</td>
-      <td><span class="status-badge ${isRunning ? 'running' : p.status?.toLowerCase() === 'completed' ? 'inactive' : 'failed'}">${p.status || ''}</span></td>
-      <td>${p.restarts || ''}</td>
-      <td style="font-size:11px;color:var(--text-secondary);">${p.age || ''}</td>
+      <td style="font-size:11px;">${htmlEsc(p.namespace || '')}</td>
+      <td><strong>${htmlEsc(p.name || '')}</strong></td>
+      <td>${htmlEsc(p.ready || '')}</td>
+      <td><span class="status-badge ${isRunning ? 'running' : p.status?.toLowerCase() === 'completed' ? 'inactive' : 'failed'}">${htmlEsc(p.status || '')}</span></td>
+      <td>${htmlEsc(p.restarts || '')}</td>
+      <td style="font-size:11px;color:var(--text-secondary);">${htmlEsc(p.age || '')}</td>
     </tr>`;
   }).join('');
 }
@@ -1037,7 +1037,7 @@ export function initTableUpdateManager(): void {
         const isSus = /suspicious|backdoor|hack/i.test(s);
         const isClean = s === 'clean' || s === 'enabled';
         const cls = isSus ? ' style="color:#ef4444;font-weight:500;"' : isClean ? ' style="color:#22c55e;"' : '';
-        return `<td${cls}>${s.replace(/</g, '&lt;')}</td>`;
+        return `<td${cls}>${htmlEsc(s)}</td>`;
       }).join('')}</tr>`;
     }).join('');
   };

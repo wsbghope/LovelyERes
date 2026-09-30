@@ -807,7 +807,8 @@ export class KubernetesPageManager {
             outputEl.innerHTML = this.colorizeLogs(logs) || '<span style="color:var(--text-secondary);">无日志输出</span>';
             outputEl.scrollTop = outputEl.scrollHeight;
         } catch (e) {
-            outputEl.innerHTML = `<span class="k8s-log-line-error">获取日志失败: ${e}</span>`;
+            outputEl.textContent = `获取日志失败: ${e}`;
+            outputEl.classList.add('k8s-log-line-error');
         }
     }
 }

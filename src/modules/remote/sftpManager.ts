@@ -23,6 +23,15 @@ const COMMON_UID_MAP: Record<string, string> = {
   '1000': 'user', '48': 'apache', '1001': 'user',
 };
 
+function escapeHtml(value: unknown): string {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
 export class SftpManager {
   private currentPath: string = '/';
   private fileList: SftpFileInfo[] = [];
@@ -331,7 +340,8 @@ export class SftpManager {
       accumulated += '/' + parts[i];
       const isLast = i === parts.length - 1;
       html += '<span class="breadcrumb-sep">›</span>';
-      html += `<span class="breadcrumb-segment${isLast ? ' breadcrumb-current' : ''}" onclick="sftpManager.navigateToPath('${accumulated}')" title="${accumulated}">${parts[i]}</span>`;
+      const encodedPath = encodeURIComponent(accumulated).replace(/'/g, '%27');
+      html += `<span class="breadcrumb-segment${isLast ? ' breadcrumb-current' : ''}" onclick="sftpManager.navigateToPath(decodeURIComponent('${encodedPath}'))" title="${escapeHtml(accumulated)}">${escapeHtml(parts[i])}</span>`;
     }
     return html;
   }
@@ -443,13 +453,13 @@ export class SftpManager {
           <td class="sftp-td-check"><input type="checkbox" class="sftp-row-check" onclick="event.stopPropagation()"></td>
           <td class="file-icon-cell">
             <div class="file-icon">${icon}</div>
-            <span class="file-name" title="${file.name}">${file.name}</span>
+            <span class="file-name" title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</span>
           </td>
           <td class="sftp-td-type">${typeLabel}</td>
-          <td class="sftp-td-size">${sizeText}</td>
-          <td class="perms-cell">${perms}</td>
-          <td class="owner-cell ${ownerClass}">${ownerDisplay}</td>
-          <td class="sftp-td-time">${modified}</td>
+          <td class="sftp-td-size">${escapeHtml(sizeText)}</td>
+          <td class="perms-cell">${escapeHtml(perms)}</td>
+          <td class="owner-cell ${ownerClass}">${escapeHtml(ownerDisplay)}</td>
+          <td class="sftp-td-time">${escapeHtml(modified)}</td>
           <td class="sftp-td-risk">${riskTag}</td>
         </tr>
       `;
@@ -478,7 +488,7 @@ export class SftpManager {
 
       // Update path in status bar
       const pathEl = document.getElementById('sftp-status-path');
-      if (pathEl) pathEl.innerHTML = `<span>${this.currentPath}</span>`;
+      if (pathEl) pathEl.textContent = this.currentPath;
 
       // 敏感目录审计横幅：在敏感目录（或其子目录）时显示
       const banner = document.getElementById('sftp-audit-banner');
