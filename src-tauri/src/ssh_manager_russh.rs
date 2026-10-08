@@ -10,6 +10,7 @@ use russh::client::{Config, Handle, Handler};
 use russh::keys::{PublicKey, PrivateKeyWithHashAlg};
 use russh::{ChannelMsg, Disconnect};
 use russh_sftp::client::SftpSession;
+use russh_sftp::protocol::FileAttributes;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 // ================== Types ==================
@@ -182,6 +183,18 @@ enum WorkerCommand {
         new_path: String,
         response_tx: mpsc::Sender<Result<(), String>>,
     },
+    DeployOfflineTool {
+        session_id: String,
+        remote_path: String,
+        expected_uid: u32,
+        content: Vec<u8>,
+        response_tx: mpsc::Sender<Result<(), String>>,
+    },
+    CleanupOfflineTools {
+        session_id: String,
+        expected_uid: u32,
+        response_tx: mpsc::Sender<Result<(), String>>,
+    },
     Disconnect {
         session_id: String,
         response_tx: mpsc::Sender<Result<(), String>>,
@@ -233,6 +246,7 @@ enum WorkerCommand {
         interface: String,
         filter: Option<String>,
         count: Option<u32>,
+        sudo_password: Option<String>,
         window: tauri::Window,
         response_tx: mpsc::Sender<Result<(), String>>,
     },
@@ -321,12 +335,15 @@ async fn connect_async(
     // Authenticate with timeout
     let auth_result = if let Some(key_str) = private_key {
         // Try key authentication
+        // For key authentication, `password` carries the optional key passphrase.
+        // Treat an empty form value as no passphrase so unencrypted keys keep working.
+        let key_passphrase = password.filter(|value| !value.is_empty());
         let key_pair = if key_str.contains("OPENSSH PRIVATE KEY") || key_str.contains("RSA PRIVATE KEY") || key_str.contains("-----BEGIN") {
-            russh_keys::decode_secret_key(key_str, None)
+            russh_keys::decode_secret_key(key_str, key_passphrase)
                 .map_err(|e| format!("Failed to decode private key: {}", e))?
         } else {
             // Assume it's a file path
-            russh_keys::load_secret_key(key_str, None)
+            russh_keys::load_secret_key(key_str, key_passphrase)
                 .map_err(|e| format!("Failed to load private key: {}", e))?
         };
         
@@ -649,6 +666,181 @@ async fn rename_sftp_file_async(
     Ok(())
 }
 
+fn private_sftp_attributes() -> FileAttributes {
+    let mut attrs = FileAttributes::empty();
+    attrs.permissions = Some(0o700);
+    attrs
+}
+
+async fn ensure_private_sftp_directory(
+    sftp: &SftpSession,
+    path: &str,
+    expected_uid: u32,
+) -> Result<(), String> {
+    match sftp.symlink_metadata(path).await {
+        Ok(attrs) => {
+            if attrs.is_symlink() || !attrs.is_dir() {
+                return Err(format!("远端离线工具路径不是安全目录: {path}"));
+            }
+            if attrs.uid.is_some_and(|uid| uid != expected_uid) {
+                return Err(format!("远端离线工具目录不属于当前登录用户: {path}"));
+            }
+        }
+        Err(_) => {
+            sftp.create_dir(path)
+                .await
+                .map_err(|e| format!("创建远端离线工具目录失败 {path}: {e}"))?;
+            let attrs = sftp
+                .symlink_metadata(path)
+                .await
+                .map_err(|e| format!("检查新建远端目录失败 {path}: {e}"))?;
+            if !attrs.is_dir() || attrs.uid.is_some_and(|uid| uid != expected_uid) {
+                return Err(format!("新建远端目录的类型或所有者异常: {path}"));
+            }
+        }
+    }
+
+    sftp.set_metadata(path, private_sftp_attributes())
+        .await
+        .map_err(|e| format!("设置远端目录 0700 权限失败 {path}: {e}"))
+}
+
+async fn deploy_offline_tool_async(
+    handle: &Handle<ClientHandler>,
+    remote_path: &str,
+    expected_uid: u32,
+    content: &[u8],
+) -> Result<(), String> {
+    let expected_root = format!("/tmp/lovelyres-{expected_uid}");
+    if !crate::offline_tools::validate_remote_tool_path(remote_path, expected_uid) {
+        return Err("拒绝向 UID 隔离目录之外部署离线工具".to_string());
+    }
+
+    let channel = handle
+        .channel_open_session()
+        .await
+        .map_err(|e| format!("打开离线工具 SFTP 通道失败: {e}"))?;
+    channel
+        .request_subsystem(true, "sftp")
+        .await
+        .map_err(|e| format!("目标 SSH 服务未提供 SFTP，无法安全部署离线工具: {e}"))?;
+    let sftp = SftpSession::new(channel.into_stream())
+        .await
+        .map_err(|e| format!("创建离线工具 SFTP 会话失败: {e}"))?;
+
+    ensure_private_sftp_directory(&sftp, &expected_root, expected_uid).await?;
+    ensure_private_sftp_directory(&sftp, &format!("{expected_root}/bin"), expected_uid).await?;
+
+    if let Ok(attrs) = sftp.symlink_metadata(remote_path).await {
+        if attrs.is_symlink() || !attrs.is_regular() {
+            return Err(format!("拒绝覆盖非普通文件或符号链接: {remote_path}"));
+        }
+        if attrs.uid.is_some_and(|uid| uid != expected_uid) {
+            return Err(format!("拒绝覆盖不属于当前用户的文件: {remote_path}"));
+        }
+    }
+
+    let temp_path = format!("{remote_path}.upload-{}", uuid::Uuid::new_v4());
+    let upload_result = async {
+        let mut file = sftp
+            .create(&temp_path)
+            .await
+            .map_err(|e| format!("创建远端离线工具临时文件失败: {e}"))?;
+        file.write_all(content)
+            .await
+            .map_err(|e| format!("上传离线工具失败: {e}"))?;
+        file.flush()
+            .await
+            .map_err(|e| format!("刷新远端离线工具失败: {e}"))?;
+        file.set_metadata(private_sftp_attributes())
+            .await
+            .map_err(|e| format!("设置离线工具 0700 权限失败: {e}"))?;
+        drop(file);
+
+        let attrs = sftp
+            .symlink_metadata(&temp_path)
+            .await
+            .map_err(|e| format!("检查上传文件失败: {e}"))?;
+        if !attrs.is_regular() || attrs.is_symlink() {
+            return Err("上传结果不是普通文件".to_string());
+        }
+        if attrs.uid.is_some_and(|uid| uid != expected_uid) {
+            return Err("上传文件不属于当前登录用户".to_string());
+        }
+
+        let mut remote_file = sftp
+            .open(&temp_path)
+            .await
+            .map_err(|e| format!("重新读取上传文件失败: {e}"))?;
+        let mut uploaded = Vec::with_capacity(content.len());
+        remote_file
+            .read_to_end(&mut uploaded)
+            .await
+            .map_err(|e| format!("校验上传文件失败: {e}"))?;
+        if uploaded != content {
+            return Err("离线工具上传后字节校验失败".to_string());
+        }
+
+        if sftp.symlink_metadata(remote_path).await.is_ok() {
+            sftp.remove_file(remote_path)
+                .await
+                .map_err(|e| format!("移除旧离线工具失败: {e}"))?;
+        }
+        sftp.rename(&temp_path, remote_path)
+            .await
+            .map_err(|e| format!("启用离线工具失败: {e}"))?;
+        sftp.set_metadata(remote_path, private_sftp_attributes())
+            .await
+            .map_err(|e| format!("设置离线工具最终权限失败: {e}"))?;
+        Ok(())
+    }
+    .await;
+
+    if upload_result.is_err() {
+        let _ = sftp.remove_file(&temp_path).await;
+    }
+    upload_result
+}
+
+async fn cleanup_offline_tools_async(
+    handle: &Handle<ClientHandler>,
+    expected_uid: u32,
+) -> Result<(), String> {
+    let root = format!("/tmp/lovelyres-{expected_uid}");
+    let bin = format!("{root}/bin");
+    let tcpdump = format!("{bin}/tcpdump");
+    let channel = handle
+        .channel_open_session()
+        .await
+        .map_err(|e| format!("打开清理 SFTP 通道失败: {e}"))?;
+    channel
+        .request_subsystem(true, "sftp")
+        .await
+        .map_err(|e| format!("目标 SSH 服务未提供 SFTP，无法安全清理离线工具: {e}"))?;
+    let sftp = SftpSession::new(channel.into_stream())
+        .await
+        .map_err(|e| format!("创建清理 SFTP 会话失败: {e}"))?;
+
+    for path in [&root, &bin] {
+        if let Ok(attrs) = sftp.symlink_metadata(path).await {
+            if attrs.is_symlink() || !attrs.is_dir() || attrs.uid.is_some_and(|uid| uid != expected_uid) {
+                return Err(format!("拒绝清理类型或所有者异常的路径: {path}"));
+            }
+        }
+    }
+    if let Ok(attrs) = sftp.symlink_metadata(&tcpdump).await {
+        if attrs.is_symlink() || !attrs.is_regular() || attrs.uid.is_some_and(|uid| uid != expected_uid) {
+            return Err(format!("拒绝清理类型或所有者异常的文件: {tcpdump}"));
+        }
+        sftp.remove_file(&tcpdump)
+            .await
+            .map_err(|e| format!("删除远端 tcpdump 失败: {e}"))?;
+    }
+    let _ = sftp.remove_dir(&bin).await;
+    let _ = sftp.remove_dir(&root).await;
+    Ok(())
+}
+
 // ================== Worker Thread ==================
 
 fn run_worker(rx: mpsc::Receiver<WorkerCommand>) {
@@ -776,6 +968,36 @@ fn run_worker(rx: mpsc::Receiver<WorkerCommand>) {
                         let handle = Arc::clone(&session.handle);
                         tokio::spawn(async move {
                             let result = rename_sftp_file_async(&handle, &old_path, &new_path).await;
+                            let _ = response_tx.send(result);
+                        });
+                    } else {
+                        let _ = response_tx.send(Err(format!("Session not found: {}", session_id)));
+                    }
+                }
+
+                WorkerCommand::DeployOfflineTool { session_id, remote_path, expected_uid, content, response_tx } => {
+                    if let Some(session) = sessions.get(&session_id) {
+                        let handle = Arc::clone(&session.handle);
+                        tokio::spawn(async move {
+                            let result = deploy_offline_tool_async(
+                                &handle,
+                                &remote_path,
+                                expected_uid,
+                                &content,
+                            )
+                            .await;
+                            let _ = response_tx.send(result);
+                        });
+                    } else {
+                        let _ = response_tx.send(Err(format!("Session not found: {}", session_id)));
+                    }
+                }
+
+                WorkerCommand::CleanupOfflineTools { session_id, expected_uid, response_tx } => {
+                    if let Some(session) = sessions.get(&session_id) {
+                        let handle = Arc::clone(&session.handle);
+                        tokio::spawn(async move {
+                            let result = cleanup_offline_tools_async(&handle, expected_uid).await;
                             let _ = response_tx.send(result);
                         });
                     } else {
@@ -986,39 +1208,69 @@ fn run_worker(rx: mpsc::Receiver<WorkerCommand>) {
                     let _ = response_tx.send(result);
                 }
 
-                WorkerCommand::StartPacketCapture { session_id, interface, filter, count, window, response_tx } => {
+                WorkerCommand::StartPacketCapture { session_id, interface, filter, count, sudo_password, window, response_tx } => {
                     let result = if let Some(session) = sessions.get_mut(&session_id) {
                         // Stop existing capture if any
                         if let Some(tx) = session.packet_capture_channel.take() {
                             let _ = tx.send(());
                         }
 
-                        // Create new cancellation channel
-                        let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
-                        session.packet_capture_channel = Some(cancel_tx);
-
                         // Generate command
-                        let cmd = crate::packet_capture::generate_tcpdump_command(&interface, filter.as_deref(), count);
+                        let cmd = crate::packet_capture::generate_tcpdump_command(
+                            &interface,
+                            filter.as_deref(),
+                            count,
+                            session.info.port,
+                            sudo_password.is_some(),
+                        );
                         let window_clone = window.clone();
 
                         // Open the channel BEFORE spawning the task (can't clone Handle)
                         match session.handle.channel_open_session().await {
                             Ok(mut channel) => {
+                                let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
+
                                 // Execute the capture command
                                 let cmd_bytes: Vec<u8> = cmd.as_bytes().to_vec();
                                 if let Err(e) = channel.exec(true, cmd_bytes.as_slice()).await {
-                                    let _ = window_clone.emit("packet_capture_error", format!("Failed to execute command: {}", e));
+                                    Err(format!("Failed to execute packet capture command: {}", e))
                                 } else {
-                                    // Spawn capture task to read output
-                                    tokio::spawn(async move {
+                                    let password_result = if let Some(password) = sudo_password {
+                                        let input = format!("{}\n", password);
+                                        match channel
+                                            .data(input.as_bytes())
+                                            .await
+                                            .map_err(|e| format!("Failed to send sudo password: {}", e))
+                                        {
+                                            Ok(()) => channel
+                                                .eof()
+                                                .await
+                                                .map_err(|e| format!("Failed to finish sudo password input: {}", e)),
+                                            Err(e) => Err(e),
+                                        }
+                                    } else {
+                                        Ok(())
+                                    };
+
+                                    if let Err(e) = password_result {
+                                        Err(e)
+                                    } else {
+                                        session.packet_capture_channel = Some(cancel_tx);
+
+                                        // Spawn capture task to read output
+                                        tokio::spawn(async move {
                                         let mut cancel_rx = cancel_rx;
                                         let mut buffer = Vec::new();
+                                        let mut stderr = Vec::new();
+                                        let mut exit_status = None;
+                                        let mut cancelled = false;
                                         let mut packet_id = 0;
 
                                         loop {
                                             tokio::select! {
                                                 _ = &mut cancel_rx => {
                                                     // Cancelled
+                                                    cancelled = true;
                                                     let _ = channel.close().await;
                                                     break;
                                                 }
@@ -1040,11 +1292,15 @@ fn run_worker(rx: mpsc::Receiver<WorkerCommand>) {
                                                                 }
                                                             }
                                                         }
-                                                        Some(ChannelMsg::ExtendedData { data, .. }) => {
+                                                        Some(ChannelMsg::ExtendedData { data, ext: 1 }) => {
+                                                            stderr.extend_from_slice(&data);
                                                             let info = String::from_utf8_lossy(&data);
                                                             let _ = window_clone.emit("packet_capture_info", info.to_string());
                                                         }
-                                                        Some(ChannelMsg::ExitStatus { .. }) | Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => {
+                                                        Some(ChannelMsg::ExitStatus { exit_status: status }) => {
+                                                            exit_status = Some(status);
+                                                        }
+                                                        Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => {
                                                             break;
                                                         }
                                                         _ => {}
@@ -1052,17 +1308,37 @@ fn run_worker(rx: mpsc::Receiver<WorkerCommand>) {
                                                 }
                                             }
                                         }
+
+                                        // tcpdump can terminate before emitting a trailing newline.
+                                        if !buffer.is_empty() {
+                                            let line = String::from_utf8_lossy(&buffer);
+                                            let trimmed_line = line.trim();
+                                            if !trimmed_line.is_empty() {
+                                                packet_id += 1;
+                                                let packet = crate::packet_capture::parse_tcpdump_line(trimmed_line, packet_id);
+                                                let _ = window_clone.emit("packet_capture_data", packet);
+                                            }
+                                        }
+
+                                        if !cancelled && exit_status.is_some_and(|status| status != 0) {
+                                            let details = String::from_utf8_lossy(&stderr).trim().to_string();
+                                            let message = if details.is_empty() {
+                                                format!("tcpdump exited with status {}", exit_status.unwrap_or_default())
+                                            } else {
+                                                details
+                                            };
+                                            let _ = window_clone.emit("packet_capture_error", message);
+                                        }
                                         
                                         let _ = window_clone.emit("packet_capture_stopped", ());
-                                    });
+                                        });
+
+                                        Ok(())
+                                    }
                                 }
                             }
-                            Err(e) => {
-                                let _ = window_clone.emit("packet_capture_error", format!("Failed to open channel: {}", e));
-                            }
+                            Err(e) => Err(format!("Failed to open packet capture channel: {}", e)),
                         }
-
-                        Ok(())
                     } else {
                         Err(format!("Session not found: {}", session_id))
                     };
@@ -1420,6 +1696,39 @@ impl SSHManagerRussh {
         response_rx
             .recv_timeout(std::time::Duration::from_secs(120))
             .map_err(|_| "操作超时（120 秒）".to_string())?
+    }
+
+    pub fn deploy_offline_tool(
+        &self,
+        remote_path: &str,
+        expected_uid: u32,
+        content: &[u8],
+    ) -> Result<(), String> {
+        let session_id = self.get_current_session()?;
+        let (response_tx, response_rx) = mpsc::channel();
+        self.send_to_worker(WorkerCommand::DeployOfflineTool {
+            session_id,
+            remote_path: remote_path.to_string(),
+            expected_uid,
+            content: content.to_vec(),
+            response_tx,
+        })?;
+        response_rx
+            .recv_timeout(std::time::Duration::from_secs(180))
+            .map_err(|_| "部署离线工具超时（180 秒）".to_string())?
+    }
+
+    pub fn cleanup_offline_tools(&self, expected_uid: u32) -> Result<(), String> {
+        let session_id = self.get_current_session()?;
+        let (response_tx, response_rx) = mpsc::channel();
+        self.send_to_worker(WorkerCommand::CleanupOfflineTools {
+            session_id,
+            expected_uid,
+            response_tx,
+        })?;
+        response_rx
+            .recv_timeout(std::time::Duration::from_secs(120))
+            .map_err(|_| "清理离线工具超时（120 秒）".to_string())?
     }
     
     // ================== Session Management ==================
@@ -1791,6 +2100,7 @@ impl SSHManagerRussh {
         interface: &str,
         filter: Option<String>,
         count: Option<u32>,
+        sudo_password: Option<String>,
         window: tauri::Window,
     ) -> Result<(), String> {
         let session_id = self.get_current_session()?;
@@ -1802,6 +2112,7 @@ impl SSHManagerRussh {
                 interface: interface.to_string(),
                 filter,
                 count,
+                sudo_password,
                 window,
                 response_tx,
             })

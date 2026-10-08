@@ -198,8 +198,10 @@ export class BatchServerManager {
         host: conn.host,
         port: conn.port,
         username: conn.username,
+        authType: conn.authType,
         password,
         keyPath: conn.keyPath || null,
+        keyPassphrase: conn.keyPassphrase || null,
       });
 
       // 执行命令

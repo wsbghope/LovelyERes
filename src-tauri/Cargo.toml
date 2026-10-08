@@ -41,6 +41,7 @@ reqwest = { version = "0.12", features = ["json", "stream"] }
 aes-gcm = "0.10"
 base64 = "0.21"
 rand = "0.8"
+sha2 = "0.10"
 
 # Windows API 依赖
 [target.'cfg(windows)'.dependencies]

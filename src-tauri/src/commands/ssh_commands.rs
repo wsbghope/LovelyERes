@@ -170,11 +170,117 @@ pub async fn start_packet_capture(
     interface: String,
     filter: Option<String>,
     count: Option<u32>,
+    sudo_password: Option<String>,
     window: tauri::Window,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let manager = &state.ssh_manager;
-    manager.start_packet_capture(&interface, filter, count, window)
+    manager.start_packet_capture(&interface, filter, count, sudo_password, window)
+}
+
+#[tauri::command]
+pub async fn check_packet_capture_privilege(
+    interface: String,
+    state: State<'_, AppState>,
+) -> Result<packet_capture::PacketCapturePrivilege, String> {
+    let manager = &state.ssh_manager;
+    let command = packet_capture::generate_capture_privilege_command(&interface);
+    let output = manager
+        .execute_command(&command)
+        .map_err(|e| format!("检查抓包权限失败: {}", e))?;
+    let probe = packet_capture::parse_capture_privilege_output(&output.output)?;
+    let architecture = crate::offline_tools::normalize_linux_architecture(
+        &probe.machine,
+        Some(&probe.abi),
+    )
+    .map(str::to_string);
+    let can_deploy = architecture
+        .as_deref()
+        .and_then(crate::offline_tools::bundled_tcpdump)
+        .is_some();
+    let (mode, message) = if probe.mode == "tool_missing" && !can_deploy {
+        (
+            "unavailable".to_string(),
+            format!("目标架构 {} / {} 暂无内置 tcpdump", probe.machine, probe.abi),
+        )
+    } else {
+        (probe.mode, probe.message)
+    };
+
+    Ok(packet_capture::PacketCapturePrivilege {
+        mode,
+        username: probe.username,
+        message,
+        architecture,
+        remote_path: probe.tool_path,
+        can_deploy,
+    })
+}
+
+#[derive(serde::Serialize)]
+pub struct PacketCaptureToolDeployment {
+    path: String,
+    architecture: String,
+    version: String,
+    sha256: String,
+}
+
+#[tauri::command]
+pub async fn prepare_packet_capture_tool(
+    state: State<'_, AppState>,
+) -> Result<PacketCaptureToolDeployment, String> {
+    let manager = &state.ssh_manager;
+    let probe_output = manager
+        .execute_command(&packet_capture::generate_capture_privilege_command("any"))
+        .map_err(|e| format!("检查远端离线工具环境失败: {e}"))?;
+    let probe = packet_capture::parse_capture_privilege_output(&probe_output.output)?;
+    let architecture = crate::offline_tools::normalize_linux_architecture(
+        &probe.machine,
+        Some(&probe.abi),
+    )
+    .ok_or_else(|| format!("不支持的 Linux 架构: {} / {}", probe.machine, probe.abi))?;
+    let tool = crate::offline_tools::bundled_tcpdump(architecture)
+        .ok_or_else(|| format!("应用未内置 {architecture} 架构的 tcpdump"))?;
+    let remote_path = crate::offline_tools::remote_tool_path(probe.uid, tool.name)?;
+    let sha256 = crate::offline_tools::sha256_hex(tool.bytes);
+
+    manager
+        .deploy_offline_tool(&remote_path, probe.uid, tool.bytes)
+        .map_err(|e| format!("部署内置 tcpdump 失败: {e}"))?;
+
+    let verify_command = format!("LC_ALL=C {remote_path} --version");
+    let verification = manager
+        .execute_command(&verify_command)
+        .map_err(|e| format!("执行已上传 tcpdump 失败: {e}"))?;
+    if verification.exit_code != Some(0) {
+        let diagnostic = manager
+            .execute_command(&format!(
+                "if command -v findmnt >/dev/null 2>&1; then findmnt -no OPTIONS -T '{remote_path}'; else grep ' /tmp ' /proc/mounts 2>/dev/null || true; fi"
+            ))
+            .map(|output| output.output.trim().to_string())
+            .unwrap_or_default();
+        return Err(format!(
+            "已为当前用户设置 0700 权限，但 tcpdump 仍无法执行。/tmp 可能启用了 noexec 或受 SELinux/AppArmor 限制。{}",
+            if diagnostic.is_empty() { String::new() } else { format!(" 挂载信息: {diagnostic}") }
+        ));
+    }
+
+    Ok(PacketCaptureToolDeployment {
+        path: remote_path,
+        architecture: tool.architecture.to_string(),
+        version: tool.version.to_string(),
+        sha256,
+    })
+}
+
+#[tauri::command]
+pub async fn cleanup_packet_capture_tools(state: State<'_, AppState>) -> Result<(), String> {
+    let manager = &state.ssh_manager;
+    let probe_output = manager
+        .execute_command(&packet_capture::generate_capture_privilege_command("any"))
+        .map_err(|e| format!("获取当前账号 UID 失败: {e}"))?;
+    let probe = packet_capture::parse_capture_privilege_output(&probe_output.output)?;
+    manager.cleanup_offline_tools(probe.uid)
 }
 
 #[tauri::command]
@@ -190,7 +296,16 @@ pub async fn get_network_interfaces(state: State<'_, AppState>) -> Result<Vec<pa
     let output = manager.execute_command(&cmd)
         .map_err(|e| format!("获取网络接口失败: {}", e))?;
 
-    let mut interfaces: Vec<packet_capture::NetworkInterface> = Vec::new();
+    // `any` is the safest default for incident response and avoids silently
+    // selecting loopback merely because it is the first interface returned.
+    let mut interfaces: Vec<packet_capture::NetworkInterface> = vec![
+        packet_capture::NetworkInterface {
+            name: "any".to_string(),
+            index: 0,
+            mac: None,
+            ips: Vec::new(),
+        },
+    ];
     let mut index = 0u32;
 
     for line in output.output.lines() {

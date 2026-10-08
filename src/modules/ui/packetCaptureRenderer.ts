@@ -9,7 +9,7 @@ import {
 } from '@icon-park/svg';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { showAlert } from './confirmDialog';
+import { showAlert, showConfirm, showPrompt } from './confirmDialog';
 
 // ─── Interfaces ───────────────────────────────────────────────────────────────
 
@@ -28,6 +28,15 @@ interface NetworkInterface {
   name: string;
   index: number;
   ips: string[];
+}
+
+interface PacketCapturePrivilege {
+  mode: 'direct' | 'sudo_nopasswd' | 'sudo_password' | 'tool_missing' | 'unavailable';
+  username: string;
+  message: string;
+  architecture: string | null;
+  remote_path: string | null;
+  can_deploy: boolean;
 }
 
 type PacketTab = 'realtime' | 'statistics' | 'conversations' | 'dns-http' | 'threat';
@@ -99,6 +108,7 @@ export class PacketCaptureRenderer {
   // Core state
   private packets: PacketEntry[] = [];
   private isCapturing = false;
+  private isStarting = false;
   private interfaces: NetworkInterface[] = [];
   private selectedInterface = '';
   private currentTab: PacketTab = 'realtime';
@@ -136,6 +146,7 @@ export class PacketCaptureRenderer {
   // Internal
   private unlistenFn: (() => void) | null = null;
   private listenersReady = false;
+  private listenersPromise: Promise<void> | null = null;
   private boundClickHandler: ((e: MouseEvent) => void) | null = null;
   private boundChangeHandler: ((e: Event) => void) | null = null;
   private initialized = false;
@@ -148,6 +159,7 @@ export class PacketCaptureRenderer {
 
   public async initialize(): Promise<void> {
     if (this.initialized) return;
+    this.initialized = true;
 
     this.boundClickHandler = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
@@ -173,7 +185,12 @@ export class PacketCaptureRenderer {
     document.addEventListener('change', this.boundChangeHandler);
     document.addEventListener('input', this.boundChangeHandler);
 
-    await this.setupListeners();
+    try {
+      await this.setupListeners();
+    } catch (error) {
+      this.initialized = false;
+      throw error;
+    }
 
     this.rateInterval = window.setInterval(() => {
       const now = Date.now();
@@ -185,38 +202,61 @@ export class PacketCaptureRenderer {
       if (totalEl) totalEl.textContent = String(this.packets.length);
     }, 1000);
 
-    this.initialized = true;
   }
 
   private async setupListeners(): Promise<void> {
-    if (this.unlistenFn) {
-      this.unlistenFn();
-    }
+    if (this.listenersReady) return;
+    if (this.listenersPromise) return this.listenersPromise;
 
-    const unlistenData = await listen('packet_capture_data', (event: any) => {
-      this.addPacket(event.payload as PacketEntry);
-    });
+    const setup = async () => {
+      if (this.unlistenFn) {
+        this.unlistenFn();
+      }
 
-    const unlistenError = await listen('packet_capture_error', (event: any) => {
-      console.error('Packet Capture Error:', event.payload);
-      this.stopCapture();
-      showAlert({ title: '抓包错误', message: `${event.payload}`, type: 'error' });
-    });
+      const unlistenData = await listen('packet_capture_data', (event: any) => {
+        this.addPacket(event.payload as PacketEntry);
+      });
 
-    const unlistenStop = await listen('packet_capture_stopped', () => {
-      this.isCapturing = false;
-      this.updateCaptureButtons();
-    });
+      const unlistenInfo = await listen('packet_capture_info', (event: any) => {
+        const message = `${event.payload || ''}`.trim();
+        if (message) console.info('Packet Capture:', message);
+      });
 
-    this.unlistenFn = () => {
-      unlistenData();
-      unlistenError();
-      unlistenStop();
+      const unlistenError = await listen('packet_capture_error', (event: any) => {
+        console.error('Packet Capture Error:', event.payload);
+        void this.stopCapture();
+        showAlert({ title: '抓包错误', message: `${event.payload}`, type: 'error' });
+      });
+
+      const unlistenStop = await listen('packet_capture_stopped', () => {
+        this.isCapturing = false;
+        this.updateCaptureButtons();
+      });
+
+      this.unlistenFn = () => {
+        unlistenData();
+        unlistenInfo();
+        unlistenError();
+        unlistenStop();
+      };
+      this.listenersReady = true;
     };
-    this.listenersReady = true;
+
+    this.listenersPromise = setup();
+    try {
+      await this.listenersPromise;
+    } finally {
+      this.listenersPromise = null;
+    }
   }
 
   public destroy(): void {
+    if (this.isCapturing) {
+      this.isCapturing = false;
+      void invoke('stop_packet_capture').catch(error => {
+        console.error('Failed to stop capture during cleanup:', error);
+      });
+    }
     if (this.boundClickHandler) {
       document.removeEventListener('click', this.boundClickHandler);
       this.boundClickHandler = null;
@@ -262,8 +302,10 @@ export class PacketCaptureRenderer {
 
     const interfaceOptions = this.interfaces
       .map(
-        iface =>
-          `<option value="${iface.name}" ${iface.name === this.selectedInterface ? 'selected' : ''}>${iface.name} (${iface.ips.join(', ')})</option>`
+        iface => {
+          const detail = iface.ips.length > 0 ? iface.ips.join(', ') : '全部接口';
+          return `<option value="${iface.name}" ${iface.name === this.selectedInterface ? 'selected' : ''}>${iface.name} (${detail})</option>`;
+        }
       )
       .join('');
 
@@ -283,6 +325,7 @@ export class PacketCaptureRenderer {
             <input type="number" value="0" placeholder="数量" id="pc-count-input" style="width:60px" class="pc-count-input" />
             <button class="modern-btn primary" data-pc-action="start-capture" id="pc-start-btn">${icon(Play)} 开始</button>
             <button class="modern-btn secondary hidden" data-pc-action="stop-capture" id="pc-stop-btn">${icon(Pause)} 停止</button>
+            <button class="modern-btn secondary" data-pc-action="cleanup-tools">清理远端工具</button>
             <button class="modern-btn secondary" data-pc-action="clear-packets">${icon(Delete)} 清空</button>
           </div>
         </div>
@@ -775,8 +818,13 @@ export class PacketCaptureRenderer {
   private extractIp(addr: string): string {
     if (!addr) return '';
     // addr may be like "192.168.1.1.80" or "192.168.1.1" or "fe80::1.443"
+    const ipv4WithPort = addr.match(/^((?:\d{1,3}\.){3}\d{1,3})\.(\d{1,5})$/);
+    if (ipv4WithPort && parseInt(ipv4WithPort[2], 10) <= 65535) {
+      return ipv4WithPort[1];
+    }
+
     const lastDot = addr.lastIndexOf('.');
-    if (lastDot === -1) return addr;
+    if (lastDot === -1 || !addr.substring(0, lastDot).includes(':')) return addr;
     const suffix = addr.substring(lastDot + 1);
     const port = parseInt(suffix, 10);
     if (!isNaN(port) && port >= 0 && port < 65536 && suffix === String(port)) {
@@ -787,8 +835,13 @@ export class PacketCaptureRenderer {
 
   private extractPort(addr: string): string | null {
     if (!addr) return null;
+    const ipv4WithPort = addr.match(/^((?:\d{1,3}\.){3}\d{1,3})\.(\d{1,5})$/);
+    if (ipv4WithPort && parseInt(ipv4WithPort[2], 10) <= 65535) {
+      return ipv4WithPort[2];
+    }
+
     const lastDot = addr.lastIndexOf('.');
-    if (lastDot === -1) return null;
+    if (lastDot === -1 || !addr.substring(0, lastDot).includes(':')) return null;
     const suffix = addr.substring(lastDot + 1);
     const port = parseInt(suffix, 10);
     if (!isNaN(port) && port >= 0 && port < 65536 && suffix === String(port)) {
@@ -1023,6 +1076,9 @@ export class PacketCaptureRenderer {
       case 'clear-packets':
         this.clearAll();
         break;
+      case 'cleanup-tools':
+        void this.cleanupRemoteTools();
+        break;
       case 'switch-tab':
         this.switchTab(el.dataset.tab as PacketTab);
         break;
@@ -1065,6 +1121,8 @@ export class PacketCaptureRenderer {
   }
 
   private async startCapture(): Promise<void> {
+    if (this.isCapturing || this.isStarting) return;
+
     const filterInput = document.getElementById('pc-filter-input') as HTMLInputElement | null;
     const countInput = document.getElementById('pc-count-input') as HTMLInputElement | null;
     const filter = filterInput?.value || '';
@@ -1075,24 +1133,100 @@ export class PacketCaptureRenderer {
       return;
     }
 
-    // Clear all state
-    this.clearAll();
-
-    this.captureStartTime = Date.now();
-    this.isCapturing = true;
+    this.isStarting = true;
     this.updateCaptureButtons();
 
     try {
+      let privilege = await invoke('check_packet_capture_privilege', {
+        interface: this.selectedInterface,
+      }) as PacketCapturePrivilege;
+
+      if (privilege.mode === 'tool_missing') {
+        const approved = await showConfirm({
+          title: '目标机未安装 tcpdump',
+          message: `${privilege.message}\n\n将上传经过校验的静态 tcpdump 到：\n${privilege.remote_path || '/tmp/lovelyres-UID/bin/tcpdump'}\n\n文件归当前登录用户所有，权限设置为 0700；无需目标机出网，也不依赖 curl、wget、nc 或 BusyBox。`,
+          confirmText: '上传并继续',
+          cancelText: '取消',
+        });
+        if (!approved) return;
+
+        await invoke('prepare_packet_capture_tool');
+        privilege = await invoke('check_packet_capture_privilege', {
+          interface: this.selectedInterface,
+        }) as PacketCapturePrivilege;
+        if (privilege.mode === 'tool_missing') {
+          throw new Error('内置 tcpdump 已上传，但目标机仍未将其识别为可执行文件');
+        }
+      }
+
+      let sudoPassword: string | null = null;
+      if (privilege.mode === 'unavailable') {
+        await showAlert({
+          title: '没有抓包权限',
+          message: `${privilege.message}\n请切换到 root/具备抓包权限的 SSH 账号，或为 tcpdump 配置 sudo/capability。`,
+          type: 'warning',
+        });
+        return;
+      }
+
+      if (privilege.mode === 'sudo_password') {
+        sudoPassword = await showPrompt({
+          title: '需要 sudo 密码',
+          message: `账号 ${privilege.username} 的 sudo 需要验证。请输入该账号的 sudo 密码（通常是该账号登录密码，不一定是 root 密码）：`,
+          placeholder: 'sudo 密码',
+          inputType: 'password',
+          confirmText: '开始抓包',
+        });
+        if (sudoPassword === null) return;
+        if (!sudoPassword) {
+          await showAlert({ title: '提示', message: 'sudo 密码不能为空', type: 'warning' });
+          return;
+        }
+      }
+
+      // Permission is ready; only now clear the previous capture state.
+      this.clearAll();
+      this.captureStartTime = Date.now();
+      this.isCapturing = true;
+      this.updateCaptureButtons();
+
       await invoke('start_packet_capture', {
         interface: this.selectedInterface,
         filter: filter || null,
         count: count > 0 ? count : null,
+        sudoPassword,
       });
     } catch (e) {
       console.error('Failed to start capture:', e);
       this.isCapturing = false;
       this.updateCaptureButtons();
       showAlert({ title: '启动失败', message: `启动抓包失败: ${e}`, type: 'error' });
+    } finally {
+      this.isStarting = false;
+      this.updateCaptureButtons();
+    }
+  }
+
+  private async cleanupRemoteTools(): Promise<void> {
+    if (this.isCapturing || this.isStarting) {
+      await showAlert({ title: '提示', message: '请先停止抓包，再清理远端工具。', type: 'warning' });
+      return;
+    }
+
+    const approved = await showConfirm({
+      title: '清理远端临时工具',
+      message: '将删除当前 SSH 用户 /tmp/lovelyres-UID/bin 下由 LovelyRes 上传的 tcpdump，并在目录为空时删除工作目录。',
+      confirmText: '清理',
+      cancelText: '取消',
+      dangerous: true,
+    });
+    if (!approved) return;
+
+    try {
+      await invoke('cleanup_packet_capture_tools');
+      await showAlert({ title: '清理完成', message: '远端临时抓包工具已清理。', type: 'info' });
+    } catch (error) {
+      await showAlert({ title: '清理失败', message: `${error}`, type: 'error' });
     }
   }
 
@@ -1142,6 +1276,7 @@ export class PacketCaptureRenderer {
     const startBtn = document.getElementById('pc-start-btn');
     const stopBtn = document.getElementById('pc-stop-btn');
     if (startBtn && stopBtn) {
+      (startBtn as HTMLButtonElement).disabled = this.isStarting;
       if (this.isCapturing) {
         startBtn.classList.add('hidden');
         stopBtn.classList.remove('hidden');

@@ -93,6 +93,7 @@ interface PromptOptions {
   placeholder?: string;
   confirmText?: string;
   cancelText?: string;
+  inputType?: 'text' | 'password';
 }
 
 interface AlertOptions {
@@ -201,7 +202,7 @@ export function showPrompt(options: PromptOptions): Promise<string | null> {
         ${buildHeader(options.title, undefined, '✏️', 'rgba(59, 130, 246, 0.1)')}
         <div class="cd-body">
           <div class="cd-message">${escapeHtml(options.message)}</div>
-          <input id="cd-input-${id}" class="cd-input" type="text"
+          <input id="cd-input-${id}" class="cd-input" type="${options.inputType || 'text'}"
             value="${escapeHtml(options.defaultValue || '')}"
             placeholder="${escapeHtml(options.placeholder || '')}" />
         </div>

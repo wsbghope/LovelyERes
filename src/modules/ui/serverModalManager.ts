@@ -247,6 +247,8 @@ async function saveServer(): Promise<void> {
     if (editingId) {
       const update = { ...serverData };
       if (!update.password) delete update.password;
+      // 密钥口令输入框不会回填；编辑时留空应保留已保存的口令。
+      if (authType === 'key' && !update.keyPassphrase) delete update.keyPassphrase;
       await sshManager.updateConnection(editingId, update);
       window.showNotification?.('连接配置已更新', 'success');
     } else {
@@ -403,8 +405,11 @@ async function scConnectForm(): Promise<void> {
   if (authType === 'key' && !keyPath && !selectedId) { window.showNotification?.('请选择私钥文件', 'warning'); return; }
   if (authType === 'password' && !password && !selectedId) { window.showNotification?.('请输入密码', 'warning'); return; }
 
-  // 选中了已保存的服务器且未输入新密码 → 走保存记录（可解密已存密码）
-  if (selectedId && !password && authType === 'password') {
+  // 选中已保存的服务器且未输入新凭据 → 使用保存记录中的密码/密钥口令。
+  if (selectedId && (
+    (authType === 'password' && !password) ||
+    (authType === 'key' && !keyPassphrase)
+  )) {
     return connectServer(selectedId);
   }
 
@@ -539,6 +544,13 @@ async function testConnection(): Promise<void> {
   const authType = (document.getElementById('sc-auth-type') as HTMLInputElement)?.value || 'password';
   const password = (document.getElementById('sc-password') as HTMLInputElement)?.value || '';
   const keyPath = (document.getElementById('sc-keypath') as HTMLInputElement)?.value || '';
+  let keyPassphrase = (document.getElementById('sc-keypass') as HTMLInputElement)?.value || '';
+  const editingId = (document.getElementById('sc-editing-id') as HTMLInputElement)?.value || '';
+
+  // 编辑已保存连接时，口令输入框留空表示沿用已保存的口令。
+  if (authType === 'key' && !keyPassphrase && editingId) {
+    keyPassphrase = getApp()?.sshManager?.getConnection(editingId)?.keyPassphrase || '';
+  }
 
   if (!host) { window.showNotification?.('请输入主机地址', 'warning'); return; }
 
@@ -549,6 +561,7 @@ async function testConnection(): Promise<void> {
     await (window as any).__TAURI__.core.invoke('ssh_test_connection', {
       host, port, username, password: authType === 'password' ? password : '',
       authType, keyPath: authType === 'key' ? keyPath : '',
+      keyPassphrase: authType === 'key' ? keyPassphrase : '',
     });
     window.showNotification?.('连接测试成功', 'success');
   } catch (e) {

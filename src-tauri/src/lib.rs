@@ -35,6 +35,7 @@ pub mod docker_commands;     // Docker 命令处理器（从 lib.rs 拆分）
 pub mod file_analysis;
 pub mod log_analysis;
 pub mod packet_capture;
+pub mod offline_tools;
 pub mod settings;
 pub mod ssh_connection_manager;
 pub mod ssh_manager_russh;  // 使用 russh 实现的 SSH 管理器
@@ -132,6 +133,9 @@ pub fn run() {
             commands::ssh_commands::detect_system_type,
             commands::ssh_commands::start_packet_capture,
             commands::ssh_commands::stop_packet_capture,
+            commands::ssh_commands::check_packet_capture_privilege,
+            commands::ssh_commands::prepare_packet_capture_tool,
+            commands::ssh_commands::cleanup_packet_capture_tools,
             commands::ssh_commands::get_network_interfaces,
             commands::ssh_commands::ssh_create_terminal_session,
             commands::ssh_commands::ssh_close_terminal_session,
