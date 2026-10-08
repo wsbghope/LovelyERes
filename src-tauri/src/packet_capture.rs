@@ -228,8 +228,13 @@ pub fn generate_tcpdump_command(
     tcpdump_args.push_str(&shell_quote(&capture_filter));
 
     let resolve_tool = "uid_value=$(id -u 2>/dev/null || printf '%s' \"${UID:-}\"); \
+        machine=$(uname -m 2>/dev/null || printf unknown); abi=default; \
+        case \"$machine\" in armv6*|armv7*) if [ -e /lib/ld-linux-armhf.so.3 ] || [ -e /lib/arm-linux-gnueabihf/ld-linux-armhf.so.3 ]; then abi=hardfloat; else abi=softfloat; fi ;; esac; \
+        case \"$machine:$abi\" in x86_64:*|amd64:*) tool_arch=x86_64 ;; i?86:*|x86:*) tool_arch=i686 ;; aarch64:*|arm64:*) tool_arch=aarch64 ;; armv6*:hardfloat) tool_arch=armv6-hardfloat ;; armv7*:softfloat) tool_arch=armv7-softfloat ;; armv7*:*) tool_arch=armv7-hardfloat ;; ppc64le:*|powerpc64le:*) tool_arch=powerpc64le ;; ppc64:*|powerpc64:*) tool_arch=powerpc64 ;; ppc:*|powerpc:*) tool_arch=powerpc ;; *) tool_arch=$machine ;; esac; \
         tool=$(command -v tcpdump 2>/dev/null || true); \
-        if [ -z \"$tool\" ] && [ -n \"$uid_value\" ]; then tool=\"/tmp/lovelyres-$uid_value/bin/tcpdump\"; fi; \
+        if [ -n \"$tool\" ] && [ ! -x \"$tool\" ]; then tool=; fi; \
+        if [ -z \"$tool\" ] && [ -n \"$uid_value\" ] && [ -x \"/tmp/lovelyres-$uid_value/bin/tcpdump\" ]; then tool=\"/tmp/lovelyres-$uid_value/bin/tcpdump\"; fi; \
+        if [ -z \"$tool\" ] && [ -n \"$uid_value\" ]; then for candidate in /tmp/lovelyres-$uid_value/bin/tcpdump-$tool_arch-*; do if [ -f \"$candidate\" ] && [ -x \"$candidate\" ]; then tool=$candidate; break; fi; done; fi; \
         if [ ! -x \"$tool\" ]; then echo 'tcpdump is not installed and no executable LovelyRes fallback is available' >&2; exit 127; fi";
 
     if use_password_sudo {
@@ -255,11 +260,12 @@ pub fn generate_capture_privilege_command(_interface: &str) -> String {
      case \"$machine\" in \
        armv6*|armv7*) if [ -e /lib/ld-linux-armhf.so.3 ] || [ -e /lib/arm-linux-gnueabihf/ld-linux-armhf.so.3 ]; then abi=hardfloat; else abi=softfloat; fi ;; \
      esac; \
+     case \"$machine:$abi\" in x86_64:*|amd64:*) tool_arch=x86_64 ;; i?86:*|x86:*) tool_arch=i686 ;; aarch64:*|arm64:*) tool_arch=aarch64 ;; armv6*:hardfloat) tool_arch=armv6-hardfloat ;; armv7*:softfloat) tool_arch=armv7-softfloat ;; armv7*:*) tool_arch=armv7-hardfloat ;; ppc64le:*|powerpc64le:*) tool_arch=powerpc64le ;; ppc64:*|powerpc64:*) tool_arch=powerpc64 ;; ppc:*|powerpc:*) tool_arch=powerpc ;; *) tool_arch=$machine ;; esac; \
      case \"$uid_value\" in ''|*[!0-9]*) echo \"unavailable|$username|无法确定当前账号 UID|$machine|$abi|0||none\"; exit 0 ;; esac; \
-     tool=$(command -v tcpdump 2>/dev/null || true); tool_source=system; \
+     system_tool=$(command -v tcpdump 2>/dev/null || true); tool=$system_tool; tool_source=system; \
      bundled=\"/tmp/lovelyres-$uid_value/bin/tcpdump\"; \
-     if [ -z \"$tool\" ] && [ -f \"$bundled\" ]; then tool=\"$bundled\"; tool_source=bundled; fi; \
-     if [ -z \"$tool\" ]; then echo \"tool_missing|$username|目标机未安装 tcpdump，可上传 LovelyRes 内置离线版本|$machine|$abi|$uid_value|$bundled|none\"; \
+     if [ -z \"$tool\" ] || [ ! -x \"$tool\" ]; then if [ -x \"$bundled\" ]; then tool=\"$bundled\"; tool_source=bundled; else for candidate in /tmp/lovelyres-$uid_value/bin/tcpdump-$tool_arch-*; do if [ -f \"$candidate\" ] && [ -x \"$candidate\" ]; then tool=$candidate; tool_source=bundled; break; fi; done; fi; fi; \
+     if [ -z \"$tool\" ]; then echo \"tool_missing|$username|目标机未安装 tcpdump，可在应急响应的文件上传中选择离线版本|$machine|$abi|$uid_value|/tmp/lovelyres-$uid_value/bin/tcpdump-$tool_arch-*|none\"; \
      elif [ ! -x \"$tool\" ]; then echo \"tool_missing|$username|tcpdump 存在但当前账号没有执行权限，可由 LovelyRes 修复|$machine|$abi|$uid_value|$tool|$tool_source\"; \
      elif [ \"$uid_value\" = 0 ]; then echo \"direct|$username|当前账号为 root|$machine|$abi|$uid_value|$tool|$tool_source\"; \
      elif [ -u \"$tool\" ]; then echo \"direct|$username|tcpdump 已配置 SUID 权限|$machine|$abi|$uid_value|$tool|$tool_source\"; \
@@ -354,7 +360,10 @@ mod tests {
             generate_tcpdump_command("any", Some("port 80 or port 443"), Some(10), 2222, false);
 
         assert!(command.contains("sudo -n \"$tool\" --version"));
-        assert!(command.contains("\"$tool\" -nne -l -tttt -i 'any' -c 10 '(port 80 or port 443) and not port 2222'"));
+        assert!(command.contains(
+            "\"$tool\" -nne -l -tttt -i 'any' -c 10 '(port 80 or port 443) and not port 2222'"
+        ));
+        assert!(command.contains("tcpdump-$tool_arch-*"));
     }
 
     #[test]
@@ -376,7 +385,10 @@ mod tests {
         assert_eq!(probe.mode, "tool_missing");
         assert_eq!(probe.machine, "x86_64");
         assert_eq!(probe.uid, 1000);
-        assert_eq!(probe.tool_path.as_deref(), Some("/tmp/lovelyres-1000/bin/tcpdump"));
+        assert_eq!(
+            probe.tool_path.as_deref(),
+            Some("/tmp/lovelyres-1000/bin/tcpdump")
+        );
     }
 
     #[test]

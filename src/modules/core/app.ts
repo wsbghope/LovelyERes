@@ -33,7 +33,7 @@ export interface AppState {
   serverInfo?: ServerInfo; // 新增详细服务器信息
   loading: boolean;
   loadingStep?: string; // 当前连接步骤描述
-  currentPage: 'system-info' | 'ssh-terminal' | 'remote-operations' | 'docker' | 'emergency-commands' | 'log-analysis' | 'settings' | 'kubernetes' | 'database' | 'packet-capture' | 'baseline-quick-edit' | 'java-hot-update' | 'notes' | 'secfix' | 'check-audit' | 'ai-history';
+  currentPage: 'system-info' | 'ssh-terminal' | 'remote-operations' | 'docker' | 'emergency-commands' | 'file-upload' | 'log-analysis' | 'settings' | 'kubernetes' | 'database' | 'packet-capture' | 'baseline-quick-edit' | 'java-hot-update' | 'notes' | 'secfix' | 'check-audit' | 'ai-history';
 }
 
 export class LovelyResApp {

@@ -1144,19 +1144,14 @@ export class PacketCaptureRenderer {
       if (privilege.mode === 'tool_missing') {
         const approved = await showConfirm({
           title: '目标机未安装 tcpdump',
-          message: `${privilege.message}\n\n将上传经过校验的静态 tcpdump 到：\n${privilege.remote_path || '/tmp/lovelyres-UID/bin/tcpdump'}\n\n文件归当前登录用户所有，权限设置为 0700；无需目标机出网，也不依赖 curl、wget、nc 或 BusyBox。`,
-          confirmText: '上传并继续',
+          message: `${privilege.message}\n\n请前往"应急响应 → 文件上传"，搜索 tcpdump 并由你选择架构、确认上传。文件会放在 /tmp/lovelyres-UID/bin 下，不覆盖目标机现有命令。`,
+          confirmText: '前往文件上传',
           cancelText: '取消',
         });
         if (!approved) return;
-
-        await invoke('prepare_packet_capture_tool');
-        privilege = await invoke('check_packet_capture_privilege', {
-          interface: this.selectedInterface,
-        }) as PacketCapturePrivilege;
-        if (privilege.mode === 'tool_missing') {
-          throw new Error('内置 tcpdump 已上传，但目标机仍未将其识别为可执行文件');
-        }
+        (window as any).__fileUploadSearch = 'tcpdump';
+        (window as any).switchPage?.('file-upload');
+        return;
       }
 
       let sudoPassword: string | null = null;

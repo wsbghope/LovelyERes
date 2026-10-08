@@ -19,6 +19,7 @@ export const commandPalettePages: CommandPalettePage[] = [
   { id: 'remote-operations', title: 'SFTP文件', desc: '远程文件管理', shortcut: 'Ctrl+3' },
   { id: 'docker', title: 'Docker容器', desc: '容器管理', shortcut: 'Ctrl+4' },
   { id: 'emergency-commands', title: '命令执行', desc: '应急命令', shortcut: 'Ctrl+5' },
+  { id: 'file-upload', title: '文件上传', desc: '应急工具上传', shortcut: '' },
   { id: 'packet-capture', title: '网络抓包', desc: '流量分析', shortcut: 'Ctrl+6' },
   { id: 'quick-detection', title: '快速检测', desc: '安全检测', shortcut: 'Ctrl+7' },
   { id: 'log-analysis', title: '日志审计', desc: '日志分析', shortcut: 'Ctrl+8' },

@@ -361,6 +361,20 @@ export function initGlobalFunctions(deps: GlobalFunctionsDeps): void {
         setTimeout(() => dockerPageManager.refresh(true), 50);
       } else if (pageId === 'emergency-commands') {
         emergencyPageManager.initialize();
+      } else if (pageId === 'file-upload') {
+        setTimeout(() => {
+          const container = document.getElementById('file-upload-page');
+          if (container) {
+            const search = (window as any).__fileUploadSearch || '';
+            (window as any).__fileUploadSearch = '';
+            import('../emergency/resourceUploadManager').then(({ resourceUploadManager }) => {
+              resourceUploadManager.mountInContainer(container, search);
+            }).catch((e) => {
+              console.error('加载文件上传模块失败:', e);
+              window.showNotification?.('加载文件上传模块失败', 'error');
+            });
+          }
+        }, 50);
       } else if (pageId === 'log-analysis') {
         setTimeout(() => { (window as any).refreshLogAnalysis(); }, 200);
       } else if (pageId === 'settings') {

@@ -523,6 +523,7 @@ export class ModernUIRenderer {
         id: 'emergency', label: '应急响应', accent: '#f87171', icon: Shield(ico),
         items: [
           { id: 'emergency-commands', icon: Code(ico), title: '命令执行' },
+          { id: 'file-upload', icon: Upload(ico), title: '文件上传' },
           { id: 'packet-capture', icon: NetworkTree(ico), title: '网络抓包' },
           { id: 'log-analysis', icon: Log(ico), title: '日志审计' },
           { id: 'check-audit', icon: Bug(ico), title: 'Check审计' },
@@ -765,6 +766,8 @@ export class ModernUIRenderer {
         return this.renderDockerPage();
       case 'emergency-commands':
         return this.renderEmergencyCommandsPage();
+      case 'file-upload':
+        return this.renderFileUploadPage();
       case 'kubernetes':
         return this.renderKubernetesPage();
       case 'database':
@@ -1137,6 +1140,13 @@ export class ModernUIRenderer {
    */
   private renderEmergencyCommandsPage(): string {
     return this.emergencyRenderer.renderEmergencyCommandsPage();
+  }
+
+  /**
+   * 渲染文件上传页面（应急响应 → 文件上传）
+   */
+  private renderFileUploadPage(): string {
+    return '<div id="file-upload-page" style="height:100%"></div>';
   }
 
   /**

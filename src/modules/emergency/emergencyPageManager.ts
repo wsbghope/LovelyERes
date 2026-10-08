@@ -148,6 +148,11 @@ class EmergencyPageManager {
     w.emergencyLocateFile = (path: string) => this.locateFile(path);
     w.emergencyAddFinding = (path: string) => this.addToInvestigation(path);
     w.emergencyShowFavorites = () => this.showFavorites();
+    w.emergencyOpenFileUpload = (search = '') => {
+      // 文件上传现在是独立页面，通过 switchPage 导航并传递搜索词
+      (window as any).__fileUploadSearch = search;
+      ((window as any).app?.switchPage || (window as any).switchPage)?.('file-upload');
+    };
   }
 
   private openTerminalAt(path: string): void {

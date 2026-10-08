@@ -76,12 +76,15 @@ pub fn remote_tool_root(uid: u32) -> String {
     format!("/tmp/lovelyres-{uid}")
 }
 
-pub fn remote_tool_path(uid: u32, tool_name: &str) -> Result<String, String> {
-    if tool_name.is_empty()
-        || !tool_name
+pub fn valid_tool_name(tool_name: &str) -> bool {
+    !tool_name.is_empty()
+        && tool_name
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
-    {
+}
+
+pub fn remote_tool_path(uid: u32, tool_name: &str) -> Result<String, String> {
+    if !valid_tool_name(tool_name) {
         return Err("离线工具名称包含非法字符".to_string());
     }
 
@@ -90,13 +93,8 @@ pub fn remote_tool_path(uid: u32, tool_name: &str) -> Result<String, String> {
 
 pub fn validate_remote_tool_path(path: &str, uid: u32) -> bool {
     let prefix = format!("{}/bin/", remote_tool_root(uid));
-    path.strip_prefix(&prefix).is_some_and(|name| {
-        !name.is_empty()
-            && !name.contains('/')
-            && name
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
-    })
+    path.strip_prefix(&prefix)
+        .is_some_and(|name| !name.contains('/') && valid_tool_name(name))
 }
 
 pub fn sha256_hex(data: &[u8]) -> String {

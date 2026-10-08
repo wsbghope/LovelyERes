@@ -40,10 +40,11 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "resources": [
-      "resources/capture/NOTICE.md",
-      "resources/capture/licenses/**/*"
-    ],
+    "resources": {
+      "resources/capture/NOTICE.md": "resources/capture/NOTICE.md",
+      "resources/capture/licenses/": "resources/capture/licenses/",
+      "../LovelyERes-Resources/": "LovelyERes-Resources/"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

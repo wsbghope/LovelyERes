@@ -36,6 +36,7 @@ pub mod file_analysis;
 pub mod log_analysis;
 pub mod packet_capture;
 pub mod offline_tools;
+pub mod resource_repository;
 pub mod settings;
 pub mod ssh_connection_manager;
 pub mod ssh_manager_russh;  // 使用 russh 实现的 SSH 管理器
@@ -137,6 +138,9 @@ pub fn run() {
             commands::ssh_commands::prepare_packet_capture_tool,
             commands::ssh_commands::cleanup_packet_capture_tools,
             commands::ssh_commands::get_network_interfaces,
+            resource_repository::get_resource_directory,
+            resource_repository::scan_resource_tools,
+            resource_repository::deploy_resource_tools,
             commands::ssh_commands::ssh_create_terminal_session,
             commands::ssh_commands::ssh_close_terminal_session,
             commands::ssh_commands::ssh_close_all_terminal_sessions,
