@@ -368,6 +368,7 @@ export function initGlobalFunctions(deps: GlobalFunctionsDeps): void {
             const search = (window as any).__fileUploadSearch || '';
             (window as any).__fileUploadSearch = '';
             import('../emergency/resourceUploadManager').then(({ resourceUploadManager }) => {
+              if (!container.isConnected || app.getStateManager()?.getState()?.currentPage !== 'file-upload') return;
               resourceUploadManager.mountInContainer(container, search);
             }).catch((e) => {
               console.error('加载文件上传模块失败:', e);
@@ -499,6 +500,13 @@ export function initGlobalFunctions(deps: GlobalFunctionsDeps): void {
         }
       }
     }
+  };
+
+  // 文件上传是「应急响应」下的独立页面。跨模块入口统一走这里，
+  // 避免由命令执行、网络抓包等任一子模块拥有其导航生命周期。
+  (window as any).openEmergencyFileUpload = (search = '') => {
+    (window as any).__fileUploadSearch = String(search || '');
+    (window as any).switchPage?.('file-upload');
   };
 
   // ──── SSH 连接对话框和设置覆盖层 ────

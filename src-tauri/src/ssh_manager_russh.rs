@@ -7,7 +7,7 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use serde::{Deserialize, Serialize};
 use russh::client::{Config, Handle, Handler};
-use russh::keys::{PublicKey, PrivateKeyWithHashAlg};
+use russh::keys::{PublicKey, PrivateKeyWithHashAlg, HashAlg};
 use russh::{ChannelMsg, Disconnect};
 use russh_sftp::client::SftpSession;
 use russh_sftp::protocol::FileAttributes;
@@ -109,13 +109,19 @@ pub struct ConnectionInfo {
 // ================== SSH Client Handler ==================
 
 struct ClientHandler {
-    host_key_accepted: bool,
+    host: String,
+    port: u16,
+    expected_fingerprint: Option<String>,
+    rejected_fingerprint: Arc<Mutex<Option<String>>>,
 }
 
 impl ClientHandler {
-    fn new() -> Self {
+    fn new(host: &str, port: u16, expected_fingerprint: Option<&str>, rejected_fingerprint: Arc<Mutex<Option<String>>>) -> Self {
         Self {
-            host_key_accepted: false,
+            host: host.to_string(),
+            port,
+            expected_fingerprint: expected_fingerprint.map(str::to_string),
+            rejected_fingerprint,
         }
     }
 }
@@ -123,10 +129,26 @@ impl ClientHandler {
 impl Handler for ClientHandler {
     type Error = russh::Error;
 
-    async fn check_server_key(&mut self, _server_public_key: &PublicKey) -> Result<bool, Self::Error> {
-        // Accept all host keys (similar to StrictHostKeyChecking=no)
-        self.host_key_accepted = true;
-        Ok(true)
+    async fn check_server_key(&mut self, server_public_key: &PublicKey) -> Result<bool, Self::Error> {
+        let fingerprint = server_public_key.fingerprint(HashAlg::Sha256).to_string();
+        match russh::keys::check_known_hosts(&self.host, self.port, server_public_key) {
+            Ok(true) => Ok(true),
+            Err(_) => {
+                if let Ok(mut rejected) = self.rejected_fingerprint.lock() {
+                    *rejected = Some(format!("SSH 主机密钥已变更，拒绝连接 {}:{} ({fingerprint})", self.host, self.port));
+                }
+                Ok(false)
+            }
+            Ok(false) => {
+                if self.expected_fingerprint.as_deref() == Some(&fingerprint) {
+                    return Ok(russh::keys::known_hosts::learn_known_hosts(&self.host, self.port, server_public_key).is_ok());
+                }
+                if let Ok(mut rejected) = self.rejected_fingerprint.lock() {
+                    *rejected = Some(format!("SSH_UNKNOWN_HOST_KEY:{fingerprint}"));
+                }
+                Ok(false)
+            }
+        }
     }
 }
 
@@ -143,6 +165,7 @@ enum WorkerCommand {
         username: String,
         password: Option<String>,
         private_key: Option<String>,
+        expected_fingerprint: Option<String>,
         response_tx: mpsc::Sender<Result<String, String>>,
     },
     ExecuteCommand {
@@ -290,6 +313,7 @@ async fn connect_async(
     username: &str,
     password: Option<&str>,
     private_key: Option<&str>,
+    expected_fingerprint: Option<&str>,
 ) -> Result<Handle<ClientHandler>, String> {
     // Configure SSH client with optimized settings
     let config = Config {
@@ -312,7 +336,8 @@ async fn connect_async(
     .ok_or_else(|| format!("No addresses found for host: {}", host))?;
     
     // Connect to server with timeout
-    let handler = ClientHandler::new();
+    let rejected_fingerprint = Arc::new(Mutex::new(None));
+    let handler = ClientHandler::new(host, port, expected_fingerprint, Arc::clone(&rejected_fingerprint));
     let mut handle = tokio::time::timeout(
         std::time::Duration::from_secs(15),
         russh::client::connect(Arc::new(config), addr, handler)
@@ -327,6 +352,8 @@ async fn connect_async(
             format!("连接超时 ({}:{})：无法到达目标主机。请检查：\n1. IP 地址是否正确\n2. 网络是否可达\n3. 防火墙是否阻止", host, port)
         } else if err_str.contains("10065") || err_str.contains("No route") {
             format!("无法路由到主机 ({}:{})：网络不可达", host, port)
+        } else if let Some(reason) = rejected_fingerprint.lock().ok().and_then(|value| value.clone()) {
+            reason
         } else {
             format!("连接失败 ({}:{}): {}", host, port, err_str)
         }
@@ -864,8 +891,8 @@ fn run_worker(rx: mpsc::Receiver<WorkerCommand>) {
             };
             
             match cmd {
-                WorkerCommand::Connect { host, port, username, password, private_key, response_tx } => {
-                    let result = connect_async(&host, port, &username, password.as_deref(), private_key.as_deref()).await;
+                WorkerCommand::Connect { host, port, username, password, private_key, expected_fingerprint, response_tx } => {
+                    let result = connect_async(&host, port, &username, password.as_deref(), private_key.as_deref(), expected_fingerprint.as_deref()).await;
                     match result {
                         Ok(handle) => {
                             let session_id = format!("{}@{}:{}", username, host, port);
@@ -1449,6 +1476,18 @@ impl SSHManagerRussh {
         password: Option<&str>,
         private_key: Option<&str>,
     ) -> Result<String, String> {
+        self.connect_with_fingerprint(host, port, username, password, private_key, None)
+    }
+
+    pub fn connect_with_fingerprint(
+        &self,
+        host: &str,
+        port: u16,
+        username: &str,
+        password: Option<&str>,
+        private_key: Option<&str>,
+        expected_fingerprint: Option<&str>,
+    ) -> Result<String, String> {
         let (response_tx, response_rx) = mpsc::channel();
         
         self.send_to_worker(WorkerCommand::Connect {
@@ -1457,6 +1496,7 @@ impl SSHManagerRussh {
                 username: username.to_string(),
                 password: password.map(|s| s.to_string()),
                 private_key: private_key.map(|s| s.to_string()),
+                expected_fingerprint: expected_fingerprint.map(str::to_string),
                 response_tx,
             })
 ?;

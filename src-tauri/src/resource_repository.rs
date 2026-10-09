@@ -718,15 +718,12 @@ pub async fn deploy_resource_tools(
     }
     let root = resource_root(&app)?;
     let context = remote_context(&state)?;
-    let mut loaded = Vec::new();
-    for key in &request.keys {
-        loaded.push(load_tool(&root, key)?);
-    }
-
     // wget/nc 等 BusyBox applet 只上传一次物理 provider。
     let mut provider_paths = HashMap::<(String, String, String), String>::new();
     let mut results = Vec::new();
-    for loaded_tool in loaded {
+    for key in &request.keys {
+        // Load one provider at a time; a batch must not retain all binaries in memory.
+        let loaded_tool = load_tool(&root, key)?;
         let hash = offline_tools::sha256_hex(&loaded_tool.bytes);
         let provider_key = (
             loaded_tool.tool.provider.clone(),

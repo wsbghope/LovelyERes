@@ -1149,8 +1149,13 @@ export class PacketCaptureRenderer {
           cancelText: '取消',
         });
         if (!approved) return;
-        (window as any).__fileUploadSearch = 'tcpdump';
-        (window as any).switchPage?.('file-upload');
+        const openFileUpload = (window as any).openEmergencyFileUpload;
+        if (typeof openFileUpload === 'function') {
+          openFileUpload('tcpdump');
+        } else {
+          (window as any).__fileUploadSearch = 'tcpdump';
+          (window as any).switchPage?.('file-upload');
+        }
         return;
       }
 

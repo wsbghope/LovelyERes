@@ -4,6 +4,7 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import { marked } from 'marked'
+import { sanitizeMarkdownHtml, escapeHtml } from '../utils/safeHtml'
 import * as IconPark from '@icon-park/svg'
 import { BaseContextMenu, type MenuAction } from './contextMenu/baseContextMenu'
 
@@ -582,7 +583,7 @@ ${this.currentAnalysisContent}
                 overflow: hidden;
                 text-overflow: ellipsis;
                 white-space: nowrap;
-              " title="${this.escapeHtml(item.filePath)}">📄 ${item.fileName}</div>
+              " title="${this.escapeHtml(item.filePath)}">📄 ${this.escapeHtml(item.fileName)}</div>
 
               <details style="margin-bottom: 2px;">
                 <summary style="
@@ -806,10 +807,10 @@ ${this.currentAnalysisContent}
         .replace(/<strong>/g, '<strong style="color: var(--text-primary); font-weight: 600;">')
         .replace(/<em>/g, '<em style="color: var(--text-secondary);">')
 
-      return styledHtml
+      return sanitizeMarkdownHtml(styledHtml)
     } catch (error) {
       console.error('Markdown 渲染失败:', error)
-      return markdown
+      return escapeHtml(markdown)
     }
   }
 }

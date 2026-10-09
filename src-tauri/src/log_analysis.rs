@@ -457,32 +457,38 @@ fn extract_hour(timestamp: &str) -> Option<usize> {
 
 // ==================== 命令生成 ====================
 
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
 pub fn generate_log_read_command(log_path: &str, page: usize, page_size: usize, filter: Option<&str>, date_filter: Option<&str>) -> String {
-    let total_lines = page * page_size;
+    let total_lines = page.max(1).saturating_mul(page_size.max(1));
+    let page_size = page_size.max(1);
+    let log_path = shell_quote(log_path);
 
     let mut grep_part = String::new();
     if let Some(filter_text) = filter {
         if !filter_text.trim().is_empty() {
-            grep_part.push_str(&format!(" | grep -i '{}'", filter_text));
+            grep_part.push_str(&format!(" | grep -iF -- {}", shell_quote(filter_text)));
         }
     }
     if let Some(date) = date_filter {
         if !date.trim().is_empty() {
-            grep_part.push_str(&format!(" | grep '{}'", date));
+            grep_part.push_str(&format!(" | grep -F -- {}", shell_quote(date)));
         }
     }
 
     if grep_part.is_empty() {
         if page == 1 {
-            format!("tail -n {} {} 2>/dev/null || echo 'Log file not found'", page_size, log_path)
+            format!("tail -n {} -- {} 2>/dev/null || echo 'Log file not found'", page_size, log_path)
         } else {
-            format!("tail -n {} {} 2>/dev/null | head -n {} || echo 'Log file not found'", total_lines, log_path, page_size)
+            format!("tail -n {} -- {} 2>/dev/null | head -n {} || echo 'Log file not found'", total_lines, log_path, page_size)
         }
     } else {
         if page == 1 {
-            format!("cat {} 2>/dev/null {} | tail -n {} || echo 'No matching entries'", log_path, grep_part, page_size)
+            format!("cat -- {} 2>/dev/null {} | tail -n {} || echo 'No matching entries'", log_path, grep_part, page_size)
         } else {
-            format!("cat {} 2>/dev/null {} | tail -n {} | head -n {} || echo 'No matching entries'", log_path, grep_part, total_lines, page_size)
+            format!("cat -- {} 2>/dev/null {} | tail -n {} | head -n {} || echo 'No matching entries'", log_path, grep_part, total_lines, page_size)
         }
     }
 }
@@ -492,53 +498,51 @@ pub fn generate_journalctl_command(page: usize, page_size: usize, unit: Option<&
 
     if let Some(unit_name) = unit {
         if !unit_name.trim().is_empty() {
-            cmd.push_str(&format!(" -u {}", unit_name));
+            cmd.push_str(&format!(" --unit={}", shell_quote(unit_name)));
         }
     }
     if let Some(s) = since {
         if !s.trim().is_empty() {
-            cmd.push_str(&format!(" --since \"{}\"", s));
+            cmd.push_str(&format!(" --since={}", shell_quote(s)));
         }
     }
     if let Some(u) = until {
         if !u.trim().is_empty() {
-            cmd.push_str(&format!(" --until \"{}\"", u));
+            cmd.push_str(&format!(" --until={}", shell_quote(u)));
         }
     }
-    if let Some(filter_text) = filter {
-        if !filter_text.trim().is_empty() {
-            cmd.push_str(&format!(" | grep -i '{}'", filter_text));
-        }
-    }
-
-    let total_lines = page * page_size;
-    if page == 1 {
-        cmd.push_str(&format!(" -n {}", page_size));
+    let page_size = page_size.max(1);
+    let total_lines = page.max(1).saturating_mul(page_size);
+    if let Some(filter_text) = filter.filter(|value| !value.trim().is_empty()) {
+        // Apply pagination after filtering, not as arguments to grep.
+        cmd.push_str(&format!(" 2>/dev/null | grep -iF -- {} | tail -n {}", shell_quote(filter_text), total_lines));
     } else {
-        cmd.push_str(&format!(" -n {} | head -n {}", total_lines, page_size));
+        cmd.push_str(&format!(" -n {} 2>/dev/null", total_lines));
     }
-
-    cmd.push_str(" 2>/dev/null || echo 'journalctl not available'");
+    if page > 1 {
+        cmd.push_str(&format!(" | head -n {}", page_size));
+    }
+    cmd.push_str(" || echo 'journalctl not available'");
     cmd
 }
 
 /// 生成威胁分析命令 — 读取更多行用于统计（最近 2000 行）
 pub fn generate_threat_analysis_command(log_path: &str) -> String {
-    format!("tail -n 2000 {} 2>/dev/null || echo ''", log_path)
+    format!("tail -n 2000 -- {} 2>/dev/null || echo ''", shell_quote(log_path))
 }
 
 /// 生成多日志关联读取命令
 pub fn generate_multi_log_command(log_paths: &[String], line_limit: usize) -> Vec<String> {
     log_paths.iter().map(|path| {
-        format!("tail -n {} {} 2>/dev/null || echo ''", line_limit, path)
+        format!("tail -n {} -- {} 2>/dev/null || echo ''", line_limit.max(1), shell_quote(path))
     }).collect()
 }
 
 /// 生成 IOC 搜索命令（对每个 indicator 在每个日志文件中 grep）
 pub fn generate_ioc_search_command(indicator: &str, log_path: &str) -> String {
     format!(
-        "grep -c '{}' {} 2>/dev/null || echo '0'; grep -m 3 '{}' {} 2>/dev/null || true",
-        indicator, log_path, indicator, log_path
+        "grep -Fc -- {} {} 2>/dev/null; grep -Fm 3 -- {} {} 2>/dev/null || true",
+        shell_quote(indicator), shell_quote(log_path), shell_quote(indicator), shell_quote(log_path)
     )
 }
 
@@ -550,7 +554,31 @@ pub fn generate_list_log_files_command() -> String {
 
 pub fn generate_log_file_info_command(log_path: &str) -> String {
     format!(
-        r#"stat -c "size:%s|modified:%y|readable:yes" {} 2>/dev/null || echo "readable:no""#,
-        log_path
+        r#"stat -c "size:%s|modified:%y|readable:yes" -- {} 2>/dev/null || echo "readable:no""#,
+        shell_quote(log_path)
     )
+}
+
+#[cfg(test)]
+mod command_tests {
+    use super::*;
+
+    #[test]
+    fn quotes_untrusted_arguments() {
+        let value = "a'; $(touch /tmp/pwned) `id`\n-b";
+        assert_eq!(shell_quote(value), "'a'\\''; $(touch /tmp/pwned) `id`\n-b'");
+        let command = generate_log_read_command(value, 1, 100, Some(value), Some(value));
+        assert!(command.contains(&format!("cat -- {}", shell_quote(value))));
+        assert!(command.contains(&format!("grep -iF -- {}", shell_quote(value))));
+        assert!(generate_log_file_info_command(value).contains(&format!("-- {}", shell_quote(value))));
+    }
+
+    #[test]
+    fn journal_paginates_after_filtering() {
+        let command = generate_journalctl_command(2, 100, Some("unit'"), Some("-foo"), Some("$(id)"), None);
+        assert!(command.contains("--unit='unit'\\'''"));
+        assert!(command.contains("--since='$(id)'"));
+        assert!(command.contains("grep -iF -- '-foo' | tail -n 200 | head -n 100"));
+        assert!(!command.contains("'-foo' -n"));
+    }
 }

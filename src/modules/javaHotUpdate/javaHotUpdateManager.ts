@@ -5,6 +5,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { sshConnectionManager } from '../remote/sshConnectionManager';
+import { shellQuote } from '../utils/shellSafety';
 
 // ────── 类型定义 ──────
 
@@ -472,7 +473,7 @@ class JavaHotUpdateManager {
       return;
     }
     this.showOutput(`正在列出 JAR 内容: ${jarPath}...`);
-    const output = await this.execSSH(`jar tf "${jarPath}" 2>&1 | head -200`);
+    const output = await this.execSSH(`jar tf ${shellQuote(jarPath)} 2>&1 | head -200`);
     this.showOutput(output || 'JAR 文件为空或路径无效');
   }
 
@@ -486,8 +487,9 @@ class JavaHotUpdateManager {
       return;
     }
     this.showOutput(`正在提取 class 文件: ${classPath}...`);
+    const dir = `/tmp/jhu_extract_${Date.now()}`;
     const output = await this.execSSH(
-      `cd /tmp && mkdir -p jhu_extract_${Date.now()} && cd $_ && jar xf "${jarPath}" "${classPath}" 2>&1 && echo "已提取到 $(pwd)/${classPath}" && ls -la "${classPath}" 2>/dev/null`
+      `mkdir -p ${shellQuote(dir)} && cd ${shellQuote(dir)} && jar xf ${shellQuote(jarPath)} ${shellQuote(classPath)} 2>&1 && pwd && ls -la -- ${shellQuote(classPath)} 2>/dev/null`
     );
     this.showOutput(output);
   }
@@ -503,7 +505,7 @@ class JavaHotUpdateManager {
     const srcFile = classFilePath || classPath;
     this.showOutput(`正在执行 jar uf 更新...\nJAR: ${jarPath}\n类: ${classPath}\n源文件: ${srcFile}`);
     const output = await this.execSSH(
-      `# 备份原始 JAR\ncp "${jarPath}" "${jarPath}.bak.$(date +%Y%m%d%H%M%S)" 2>&1 && echo "✅ 已备份原始 JAR" && \\\n# 执行 jar uf 更新\ncd /tmp && jar uf "${jarPath}" "${classPath}" 2>&1 && echo "✅ jar uf 更新成功: ${classPath}" || echo "❌ jar uf 更新失败"`
+      `cp -- ${shellQuote(jarPath)} ${shellQuote(`${jarPath}.bak.${Date.now()}`)} 2>&1 && cd /tmp && jar uf ${shellQuote(jarPath)} ${shellQuote(classPath)} 2>&1`
     );
     this.showOutput(output);
   }
@@ -567,7 +569,7 @@ diff <(jar tf ${this.escapeHtml(jarPath)}.bak | sort) <(jar tf ${this.escapeHtml
     if (!jarPath) { window.showNotification?.('请输入 JAR 路径', 'warning'); return; }
     this.showOutput(`正在备份 ${jarPath}...`);
     const output = await this.execSSH(
-      `cp "${jarPath}" "${jarPath}.bak.$(date +%Y%m%d%H%M%S)" 2>&1 && echo "✅ 备份完成: ${jarPath}.bak.$(date +%Y%m%d%H%M%S)" && ls -lh "${jarPath}"* | tail -5`
+      `cp -- ${shellQuote(jarPath)} ${shellQuote(`${jarPath}.bak.${Date.now()}`)} 2>&1 && ls -lh -- ${shellQuote(jarPath)}`
     );
     this.showOutput(output);
     window.showNotification?.('JAR 备份完成', 'success');
@@ -578,7 +580,7 @@ diff <(jar tf ${this.escapeHtml(jarPath)}.bak | sort) <(jar tf ${this.escapeHtml
     if (!jarPath) { window.showNotification?.('请输入 JAR 路径', 'warning'); return; }
     this.showOutput(`正在分析 JAR 结构: ${jarPath}...`);
     const output = await this.execSSH(
-      `echo "═══ JAR 基本信息 ═══" && ls -lh "${jarPath}" 2>&1 && echo "\\n═══ MANIFEST.MF ═══" && unzip -p "${jarPath}" META-INF/MANIFEST.MF 2>/dev/null | head -20 && echo "\\n═══ 目录结构（前 100 条）═══" && jar tf "${jarPath}" 2>/dev/null | head -100 && echo "\\n═══ class 文件统计 ═══" && jar tf "${jarPath}" 2>/dev/null | grep '\\.class$' | wc -l | xargs -I{} echo "{} 个 class 文件" && echo "\\n═══ 依赖 JAR（lib/）═══" && jar tf "${jarPath}" 2>/dev/null | grep 'BOOT-INF/lib/\\|lib/' | head -30`
+      `echo "═══ JAR 基本信息 ═══" && ls -lh -- ${shellQuote(jarPath)} 2>&1 && echo "\\n═══ MANIFEST.MF ═══" && unzip -p ${shellQuote(jarPath)} META-INF/MANIFEST.MF 2>/dev/null | head -20 && echo "\\n═══ 目录结构（前 100 条）═══" && jar tf ${shellQuote(jarPath)} 2>/dev/null | head -100 && echo "\\n═══ class 文件统计 ═══" && jar tf ${shellQuote(jarPath)} 2>/dev/null | grep '\\.class$' | wc -l && echo "\\n═══ 依赖 JAR（lib/）═══" && jar tf ${shellQuote(jarPath)} 2>/dev/null | grep 'BOOT-INF/lib/\\|lib/' | head -30`
     );
     this.showOutput(output);
   }
@@ -589,7 +591,7 @@ diff <(jar tf ${this.escapeHtml(jarPath)}.bak | sort) <(jar tf ${this.escapeHtml
     if (!jarPath || !keyword) { window.showNotification?.('请输入 JAR 路径和类名关键字', 'warning'); return; }
     this.showOutput(`正在搜索: ${keyword}...`);
     const output = await this.execSSH(
-      `jar tf "${jarPath}" 2>/dev/null | grep -i "${keyword}" | head -50`
+      `jar tf ${shellQuote(jarPath)} 2>/dev/null | grep -iF -- ${shellQuote(keyword)} | head -50`
     );
     this.showOutput(output || `未找到匹配 "${keyword}" 的文件`);
   }
@@ -600,7 +602,7 @@ diff <(jar tf ${this.escapeHtml(jarPath)}.bak | sort) <(jar tf ${this.escapeHtml
     // 查找最近的备份
     this.showOutput('正在对比 JAR 与最新备份...');
     const output = await this.execSSH(
-      `BACKUP=$(ls -t "${jarPath}".bak.* 2>/dev/null | head -1) && if [ -z "$BACKUP" ]; then echo "未找到备份文件"; else echo "对比: ${jarPath} vs $BACKUP" && echo "\\n═══ 文件大小对比 ═══" && ls -lh "${jarPath}" "$BACKUP" && echo "\\n═══ 内容差异（class 文件）═══" && diff <(jar tf "${jarPath}" | sort) <(jar tf "$BACKUP" | sort) | head -50 && echo "\\n═══ MD5 校验 ═══" && md5sum "${jarPath}" "$BACKUP"; fi`
+      `BACKUP=$(ls -t -- ${shellQuote(`${jarPath}.bak.`)}* 2>/dev/null | head -1) && if [ -z "$BACKUP" ]; then echo "未找到备份文件"; else ls -lh -- ${shellQuote(jarPath)} "$BACKUP" && diff <(jar tf ${shellQuote(jarPath)} | sort) <(jar tf "$BACKUP" | sort) | head -50 && md5sum -- ${shellQuote(jarPath)} "$BACKUP"; fi`
     );
     this.showOutput(output);
   }
@@ -618,9 +620,9 @@ diff <(jar tf ${this.escapeHtml(jarPath)}.bak | sort) <(jar tf ${this.escapeHtml
     let cmd: string;
     if (jarPath) {
       // 先提取再反编译
-      cmd = `cd /tmp && mkdir -p jhu_dec && cd jhu_dec && jar xf "${jarPath}" "${className}" 2>/dev/null ; javap -c -p -s "${className}" 2>&1 | head -300`;
+      cmd = `cd /tmp && mkdir -p jhu_dec && cd jhu_dec && jar xf ${shellQuote(jarPath)} ${shellQuote(className)} 2>/dev/null ; javap -c -p -s ${shellQuote(className)} 2>&1 | head -300`;
     } else {
-      cmd = `javap -c -p -s "${className}" 2>&1 | head -300`;
+      cmd = `javap -c -p -s ${shellQuote(className)} 2>&1 | head -300`;
     }
     const output = await this.execSSH(cmd);
     this.showOutput(output || 'javap 反编译失败（类名可能需要包含完整包路径，如 com/example/MyClass.class）');
@@ -650,12 +652,12 @@ diff <(jar tf ${this.escapeHtml(jarPath)}.bak | sort) <(jar tf ${this.escapeHtml
     if (jarPath && className) {
       // 反编译 JAR 中指定的类
       const classNameDot = className.replace(/\//g, '.').replace(/\.class$/, '');
-      cmd = `java -jar /tmp/cfr.jar "${jarPath}" --methodname "" 2>/dev/null | head -500 ; java -jar /tmp/cfr.jar "${jarPath}" "${classNameDot}" 2>&1 | head -500`;
+      cmd = `java -jar /tmp/cfr.jar ${shellQuote(jarPath)} --methodname "" 2>/dev/null | head -500 ; java -jar /tmp/cfr.jar ${shellQuote(jarPath)} ${shellQuote(classNameDot)} 2>&1 | head -500`;
     } else if (jarPath) {
       // 反编译整个 JAR（只显示前 500 行）
-      cmd = `java -jar /tmp/cfr.jar "${jarPath}" 2>&1 | head -500`;
+      cmd = `java -jar /tmp/cfr.jar ${shellQuote(jarPath)} 2>&1 | head -500`;
     } else {
-      cmd = `java -jar /tmp/cfr.jar "${className}" 2>&1 | head -500`;
+      cmd = `java -jar /tmp/cfr.jar ${shellQuote(className)} 2>&1 | head -500`;
     }
     const output = await this.execSSH(cmd);
     this.showOutput(output || 'CFR 反编译失败');
@@ -685,9 +687,9 @@ diff <(jar tf ${this.escapeHtml(jarPath)}.bak | sort) <(jar tf ${this.escapeHtml
 
     let cmd: string;
     if (jarPath) {
-      cmd = `java -jar /tmp/procyon.jar -jar "${jarPath}" ${className ? `"${className}"` : ''} 2>&1 | head -500`;
+      cmd = `java -jar /tmp/procyon.jar -jar ${shellQuote(jarPath)} ${className ? shellQuote(className) : ''} 2>&1 | head -500`;
     } else if (className) {
-      cmd = `java -jar /tmp/procyon.jar "${className}" 2>&1 | head -500`;
+      cmd = `java -jar /tmp/procyon.jar ${shellQuote(className)} 2>&1 | head -500`;
     } else {
       window.showNotification?.('请输入 JAR 路径或类文件路径', 'warning');
       return;
@@ -819,20 +821,20 @@ nohup java -jar ${this.escapeHtml(jarPath)} &</code></div>
 
   async restartService(name: string): Promise<void> {
     this.showOutput(`正在重启服务 ${name}...`);
-    const output = await this.execSSH(`sudo systemctl restart ${name} 2>&1 && systemctl status ${name} --no-pager 2>&1 | head -15`);
+    const output = await this.execSSH(`sudo systemctl restart -- ${shellQuote(name)} 2>&1 && systemctl status ${shellQuote(name)} --no-pager 2>&1 | head -15`);
     this.showOutput(output);
     window.showNotification?.(`服务 ${name} 已重启`, 'success');
     setTimeout(() => this.detectServices(), 1500);
   }
 
   async stopService(name: string): Promise<void> {
-    const output = await this.execSSH(`sudo systemctl stop ${name} 2>&1 && echo "服务 ${name} 已停止"`);
+    const output = await this.execSSH(`sudo systemctl stop -- ${shellQuote(name)} 2>&1`);
     this.showOutput(output);
     setTimeout(() => this.detectServices(), 1000);
   }
 
   async startService(name: string): Promise<void> {
-    const output = await this.execSSH(`sudo systemctl start ${name} 2>&1 && echo "服务 ${name} 已启动"`);
+    const output = await this.execSSH(`sudo systemctl start -- ${shellQuote(name)} 2>&1`);
     this.showOutput(output);
     setTimeout(() => this.detectServices(), 1000);
   }
@@ -1278,7 +1280,7 @@ nohup java -jar /opt/myapp/app.jar > /opt/myapp/app.log 2>&1 &</code>
   // ════════════════════════════════════════════════════
 
   private async dockerExec(containerId: string, cmd: string): Promise<string> {
-    return this.execSSH(`docker exec ${containerId} sh -c '${cmd.replace(/'/g, "'\\''")}'`);
+    return this.execSSH(`docker exec ${shellQuote(containerId)} sh -c ${shellQuote(cmd)}`);
   }
 
   private getSelectedContainerId(): string {
@@ -1354,7 +1356,7 @@ nohup java -jar /opt/myapp/app.jar > /opt/myapp/app.log 2>&1 &</code>
   private async dockerScanContainer(containerId: string): Promise<void> {
     this.showOutput('正在扫描容器内的 Java 信息...');
     const output = await this.execSSH(
-      `echo "=== Java Version ===" && docker exec ${containerId} java -version 2>&1 && echo "\\n=== Java Processes ===" && docker exec ${containerId} ps aux 2>/dev/null | grep '[j]ava' && echo "\\n=== JAR Files ===" && docker exec ${containerId} find / -maxdepth 5 -name '*.jar' -type f 2>/dev/null | grep -v /proc/ | head -20 && echo "\\n=== JDK Tools ===" && docker exec ${containerId} sh -c 'which jps jstack jmap javap jar 2>/dev/null'`
+      `echo "=== Java Version ===" && docker exec ${shellQuote(containerId)} java -version 2>&1 && echo "\\n=== Java Processes ===" && docker exec ${shellQuote(containerId)} ps aux 2>/dev/null | grep '[j]ava' && echo "\\n=== JAR Files ===" && docker exec ${shellQuote(containerId)} find / -maxdepth 5 -name '*.jar' -type f 2>/dev/null | grep -v /proc/ | head -20 && echo "\\n=== JDK Tools ===" && docker exec ${shellQuote(containerId)} sh -c 'which jps jstack jmap javap jar 2>/dev/null'`
     );
     this.showOutput(output || '该容器内无 Java 环境信息');
   }
@@ -1364,7 +1366,7 @@ nohup java -jar /opt/myapp/app.jar > /opt/myapp/app.log 2>&1 &</code>
     const jar = this.getDockerJarPath();
     if (!cid || !jar) { window.showNotification?.('请选择容器并输入 JAR 路径', 'warning'); return; }
     this.showOutput(`正在列出容器 ${cid} 内 JAR 内容...`);
-    const output = await this.dockerExec(cid, `jar tf "${jar}" 2>&1 | head -200`);
+    const output = await this.dockerExec(cid, `jar tf ${shellQuote(jar)} 2>&1 | head -200`);
     this.showOutput(output || 'JAR 文件不存在或无法读取');
   }
 
@@ -1374,7 +1376,7 @@ nohup java -jar /opt/myapp/app.jar > /opt/myapp/app.log 2>&1 &</code>
     if (!cid || !jar) { window.showNotification?.('请选择容器并输入 JAR 路径', 'warning'); return; }
     this.showOutput(`正在分析容器内 JAR 结构...`);
     const output = await this.dockerExec(cid,
-      `echo "=== JAR Info ===" && ls -lh "${jar}" 2>&1 && echo "\\n=== MANIFEST ===" && unzip -p "${jar}" META-INF/MANIFEST.MF 2>/dev/null | head -20 && echo "\\n=== Class Count ===" && jar tf "${jar}" 2>/dev/null | grep "\\.class$" | wc -l | xargs -I{} echo "{} class files" && echo "\\n=== Structure (top 80) ===" && jar tf "${jar}" 2>/dev/null | head -80`
+      `echo "=== JAR Info ===" && ls -lh -- ${shellQuote(jar)} 2>&1 && echo "\\n=== MANIFEST ===" && unzip -p ${shellQuote(jar)} META-INF/MANIFEST.MF 2>/dev/null | head -20 && echo "\\n=== Class Count ===" && jar tf ${shellQuote(jar)} 2>/dev/null | grep "\\.class$" | wc -l && echo "\\n=== Structure (top 80) ===" && jar tf ${shellQuote(jar)} 2>/dev/null | head -80`
     );
     this.showOutput(output);
   }
@@ -1390,13 +1392,13 @@ nohup java -jar /opt/myapp/app.jar > /opt/myapp/app.log 2>&1 &</code>
     if (cls) {
       // 先在容器内提取 class，再 docker cp 到宿主机
       const output = await this.execSSH(
-        `docker exec ${cid} sh -c 'mkdir -p /tmp/jhu_${ts} && cd /tmp/jhu_${ts} && jar xf "${jar}" "${cls}" 2>&1 && echo "容器内提取完成"' && mkdir -p /tmp/jhu_docker_${ts} && docker cp ${cid}:/tmp/jhu_${ts}/. /tmp/jhu_docker_${ts}/ 2>&1 && echo "已复制到宿主机: /tmp/jhu_docker_${ts}/" && ls -la /tmp/jhu_docker_${ts}/${cls} 2>/dev/null`
+        `docker exec ${shellQuote(cid)} sh -c ${shellQuote(`mkdir -p /tmp/jhu_${ts} && cd /tmp/jhu_${ts} && jar xf ${shellQuote(jar)} ${shellQuote(cls)}`)} && mkdir -p /tmp/jhu_docker_${ts} && docker cp ${shellQuote(`${cid}:/tmp/jhu_${ts}/.`)} /tmp/jhu_docker_${ts}/ 2>&1 && ls -la -- ${shellQuote(`/tmp/jhu_docker_${ts}/${cls}`)} 2>/dev/null`
       );
       this.showOutput(output);
     } else {
       // 整个 JAR 复制到宿主机
       const output = await this.execSSH(
-        `mkdir -p /tmp/jhu_docker_${ts} && docker cp ${cid}:${jar} /tmp/jhu_docker_${ts}/ 2>&1 && echo "已复制到宿主机: /tmp/jhu_docker_${ts}/" && ls -lh /tmp/jhu_docker_${ts}/`
+        `mkdir -p /tmp/jhu_docker_${ts} && docker cp ${shellQuote(`${cid}:${jar}`)} /tmp/jhu_docker_${ts}/ 2>&1 && ls -lh /tmp/jhu_docker_${ts}/`
       );
       this.showOutput(output);
     }
@@ -1415,10 +1417,10 @@ nohup java -jar /opt/myapp/app.jar > /opt/myapp/app.log 2>&1 &</code>
 
     if (hostFile) {
       // 宿主机上有编译好的 class，先 docker cp 进容器，再 jar uf
-      cmd = `echo "1. 备份容器内原始 JAR..." && docker exec ${cid} cp "${jar}" "${jar}.bak.${ts}" 2>&1 && echo "2. 复制新 class 到容器..." && docker cp ${hostFile} ${cid}:/tmp/jhu_patch_${ts}.class 2>&1 && echo "3. 在容器内执行 jar uf..." && docker exec ${cid} sh -c 'mkdir -p /tmp/jhu_work_${ts} && cd /tmp/jhu_work_${ts} && mkdir -p $(dirname "${cls}") && cp /tmp/jhu_patch_${ts}.class "${cls}" && jar uf "${jar}" "${cls}" 2>&1' && echo "=== jar uf 完成 ==="`;
+      cmd = `docker exec ${shellQuote(cid)} cp ${shellQuote(jar)} ${shellQuote(`${jar}.bak.${ts}`)} && docker cp ${shellQuote(hostFile)} ${shellQuote(`${cid}:/tmp/jhu_patch_${ts}.class`)} && docker exec ${shellQuote(cid)} sh -c ${shellQuote(`mkdir -p /tmp/jhu_work_${ts} && cd /tmp/jhu_work_${ts} && mkdir -p -- $(dirname ${shellQuote(cls)}) && cp /tmp/jhu_patch_${ts}.class ${shellQuote(cls)} && jar uf ${shellQuote(jar)} ${shellQuote(cls)}`)}`;
     } else {
       // 直接在容器内操作（class 已经在容器内）
-      cmd = `echo "1. 备份容器内原始 JAR..." && docker exec ${cid} cp "${jar}" "${jar}.bak.${ts}" 2>&1 && echo "2. 在容器内执行 jar uf..." && docker exec ${cid} sh -c 'cd /tmp && jar uf "${jar}" "${cls}" 2>&1' && echo "=== jar uf 完成 ==="`;
+      cmd = `docker exec ${shellQuote(cid)} cp ${shellQuote(jar)} ${shellQuote(`${jar}.bak.${ts}`)} && docker exec ${shellQuote(cid)} sh -c ${shellQuote(`cd /tmp && jar uf ${shellQuote(jar)} ${shellQuote(cls)}`)}`;
     }
 
     const output = await this.execSSH(cmd);
@@ -1433,7 +1435,7 @@ nohup java -jar /opt/myapp/app.jar > /opt/myapp/app.log 2>&1 &</code>
     const ts = Date.now();
     // 同时备份到容器内和宿主机
     const output = await this.execSSH(
-      `echo "=== 容器内备份 ===" && docker exec ${cid} cp "${jar}" "${jar}.bak.${ts}" 2>&1 && docker exec ${cid} ls -lh "${jar}"* 2>/dev/null | tail -5 && echo "\\n=== 复制到宿主机 ===" && mkdir -p /tmp/jhu_backups && docker cp ${cid}:${jar} /tmp/jhu_backups/$(basename ${jar}).bak.${ts} 2>&1 && ls -lh /tmp/jhu_backups/ | tail -5`
+      `docker exec ${shellQuote(cid)} cp ${shellQuote(jar)} ${shellQuote(`${jar}.bak.${ts}`)} 2>&1 && mkdir -p /tmp/jhu_backups && docker cp ${shellQuote(`${cid}:${jar}`)} ${shellQuote(`/tmp/jhu_backups/${jar.split('/').pop() || 'app.jar'}.bak.${ts}`)} 2>&1 && ls -lh /tmp/jhu_backups/ | tail -5`
     );
     this.showOutput(output);
     window.showNotification?.('JAR 备份完成(容器内+宿主机)', 'success');
@@ -1445,7 +1447,7 @@ nohup java -jar /opt/myapp/app.jar > /opt/myapp/app.log 2>&1 &</code>
     const cls = this.getDockerClassName();
     if (!cid || !jar || !cls) { window.showNotification?.('请填写容器、JAR路径、类名关键字', 'warning'); return; }
     this.showOutput(`正在容器内搜索: ${cls}...`);
-    const output = await this.dockerExec(cid, `jar tf "${jar}" 2>/dev/null | grep -i "${cls}" | head -50`);
+    const output = await this.dockerExec(cid, `jar tf ${shellQuote(jar)} 2>/dev/null | grep -iF -- ${shellQuote(cls)} | head -50`);
     this.showOutput(output || `未找到匹配 "${cls}" 的文件`);
   }
 
@@ -1457,7 +1459,7 @@ nohup java -jar /opt/myapp/app.jar > /opt/myapp/app.log 2>&1 &</code>
     this.showOutput('正在容器内反编译...');
     // 先提取 class 再 javap
     const output = await this.dockerExec(cid,
-      `cd /tmp && mkdir -p jhu_dec && cd jhu_dec && jar xf "${jar}" "${cls}" 2>/dev/null && javap -c -p "${cls}" 2>&1 | head -300`
+      `cd /tmp && mkdir -p jhu_dec && cd jhu_dec && jar xf ${shellQuote(jar)} ${shellQuote(cls)} 2>/dev/null && javap -c -p ${shellQuote(cls)} 2>&1 | head -300`
     );
     if (output.trim()) {
       this.showOutput(output);
@@ -1466,7 +1468,7 @@ nohup java -jar /opt/myapp/app.jar > /opt/myapp/app.log 2>&1 &</code>
       this.showOutput('容器内 javap 不可用，尝试复制到宿主机反编译...');
       const ts = Date.now();
       const out2 = await this.execSSH(
-        `docker exec ${cid} sh -c 'cd /tmp && mkdir -p jhu_dec_${ts} && cd jhu_dec_${ts} && jar xf "${jar}" "${cls}" 2>/dev/null' && mkdir -p /tmp/jhu_dec_host_${ts} && docker cp ${cid}:/tmp/jhu_dec_${ts}/. /tmp/jhu_dec_host_${ts}/ 2>&1 && echo "已提取到宿主机: /tmp/jhu_dec_host_${ts}/" && if [ -f /tmp/cfr.jar ]; then echo "\\n=== CFR Decompile ===" && java -jar /tmp/cfr.jar /tmp/jhu_dec_host_${ts}/${cls} 2>&1 | head -300; else javap -c -p /tmp/jhu_dec_host_${ts}/${cls} 2>&1 | head -300; fi`
+        `docker exec ${shellQuote(cid)} sh -c ${shellQuote(`cd /tmp && mkdir -p jhu_dec_${ts} && cd jhu_dec_${ts} && jar xf ${shellQuote(jar)} ${shellQuote(cls)}`)} && mkdir -p /tmp/jhu_dec_host_${ts} && docker cp ${shellQuote(`${cid}:/tmp/jhu_dec_${ts}/.`)} /tmp/jhu_dec_host_${ts}/ && if [ -f /tmp/cfr.jar ]; then java -jar /tmp/cfr.jar ${shellQuote(`/tmp/jhu_dec_host_${ts}/${cls}`)} 2>&1 | head -300; else javap -c -p ${shellQuote(`/tmp/jhu_dec_host_${ts}/${cls}`)} 2>&1 | head -300; fi`
       );
       this.showOutput(out2);
     }
@@ -1478,7 +1480,7 @@ nohup java -jar /opt/myapp/app.jar > /opt/myapp/app.log 2>&1 &</code>
     const containerPath = (document.getElementById('jhu-docker-container-path') as HTMLInputElement)?.value?.trim() || '/tmp/';
     if (!cid || !hostPath) { window.showNotification?.('请填写容器ID和宿主机文件路径', 'warning'); return; }
     this.showOutput(`正在复制 ${hostPath} -> 容器 ${cid}:${containerPath}...`);
-    const output = await this.execSSH(`docker cp "${hostPath}" ${cid}:${containerPath} 2>&1 && echo "复制完成"`);
+    const output = await this.execSSH(`docker cp -- ${shellQuote(hostPath)} ${shellQuote(`${cid}:${containerPath}`)} 2>&1 && echo "复制完成"`);
     this.showOutput(output);
   }
 
@@ -1488,7 +1490,7 @@ nohup java -jar /opt/myapp/app.jar > /opt/myapp/app.log 2>&1 &</code>
     if (!cid || !containerPath) { window.showNotification?.('请填写容器ID和容器内路径', 'warning'); return; }
     const ts = Date.now();
     this.showOutput(`正在复制容器 ${cid}:${containerPath} -> 宿主机...`);
-    const output = await this.execSSH(`mkdir -p /tmp/jhu_docker_out_${ts} && docker cp ${cid}:${containerPath} /tmp/jhu_docker_out_${ts}/ 2>&1 && echo "已复制到: /tmp/jhu_docker_out_${ts}/" && ls -lh /tmp/jhu_docker_out_${ts}/`);
+    const output = await this.execSSH(`mkdir -p /tmp/jhu_docker_out_${ts} && docker cp -- ${shellQuote(`${cid}:${containerPath}`)} /tmp/jhu_docker_out_${ts}/ 2>&1 && echo "已复制到: /tmp/jhu_docker_out_${ts}/" && ls -lh /tmp/jhu_docker_out_${ts}/`);
     this.showOutput(output);
   }
 
@@ -1496,7 +1498,7 @@ nohup java -jar /opt/myapp/app.jar > /opt/myapp/app.log 2>&1 &</code>
     if (!cid) cid = this.getSelectedContainerId();
     if (!cid) return;
     this.showOutput(`正在重启容器 ${cid}...`);
-    const output = await this.execSSH(`docker restart ${cid} 2>&1 && docker ps --filter id=${cid} --format '{{.Names}} {{.Status}}'`);
+    const output = await this.execSSH(`docker restart ${shellQuote(cid)} 2>&1 && docker ps --filter ${shellQuote(`id=${cid}`)} --format '{{.Names}} {{.Status}}'`);
     this.showOutput(output);
     window.showNotification?.('容器已重启', 'success');
     setTimeout(() => this.scanDockerJava(), 2000);
@@ -1524,7 +1526,7 @@ nohup java -jar /opt/myapp/app.jar > /opt/myapp/app.log 2>&1 &</code>
     if (!cid) return;
     this.showOutput('正在检测容器 Java 环境...');
     const output = await this.execSSH(
-      `echo "=== Container Info ===" && docker inspect ${cid} --format='Name: {{.Name}}  Image: {{.Config.Image}}  Cmd: {{.Config.Cmd}}' 2>/dev/null && echo "\\n=== Java Version ===" && docker exec ${cid} java -version 2>&1 && echo "\\n=== JDK Tools ===" && docker exec ${cid} sh -c 'which java jar javac javap jps jstack jmap 2>&1' && echo "\\n=== Java Processes ===" && docker exec ${cid} ps aux 2>/dev/null | grep '[j]ava' && echo "\\n=== Environment ===" && docker exec ${cid} sh -c 'env | grep -iE "java|jdk|jre|classpath|spring|catalina" 2>/dev/null | head -15' && echo "\\n=== JAR Files ===" && docker exec ${cid} find / -maxdepth 5 -name '*.jar' -type f 2>/dev/null | grep -v /proc/ | head -20`
+      `echo "=== Container Info ===" && docker inspect ${shellQuote(cid)} --format='Name: {{.Name}}  Image: {{.Config.Image}}  Cmd: {{.Config.Cmd}}' 2>/dev/null && echo "\\n=== Java Version ===" && docker exec ${shellQuote(cid)} java -version 2>&1 && echo "\\n=== JDK Tools ===" && docker exec ${shellQuote(cid)} sh -c 'which java jar javac javap jps jstack jmap 2>&1' && echo "\\n=== Java Processes ===" && docker exec ${shellQuote(cid)} ps aux 2>/dev/null | grep '[j]ava' && echo "\\n=== Environment ===" && docker exec ${shellQuote(cid)} sh -c 'env | grep -iE "java|jdk|jre|classpath|spring|catalina" 2>/dev/null | head -15' && echo "\\n=== JAR Files ===" && docker exec ${shellQuote(cid)} find / -maxdepth 5 -name '*.jar' -type f 2>/dev/null | grep -v /proc/ | head -20`
     );
     this.showOutput(output);
   }

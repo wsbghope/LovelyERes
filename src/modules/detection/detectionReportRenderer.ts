@@ -14,6 +14,7 @@ import {
 
 import type { DetectionItem, DetectionResult, DetectionReport } from './quickDetectionManager';
 import { showAlert } from '../ui/confirmDialog';
+import { escapeHtml } from '../utils/safeHtml';
 
 /**
  * 检测报告渲染器类
@@ -85,7 +86,7 @@ export class DetectionReportRenderer {
       case 'completed':
         if (result) {
           const icon = result.passed ? CheckOne({ theme: 'outline', size: '14', fill: '#22c55e' }) : CloseOne({ theme: 'outline', size: '14', fill: '#ef4444' });
-          statusEl.innerHTML = `${icon} <span>${result.score}分</span>`;
+          statusEl.innerHTML = `${icon} <span>${escapeHtml(result.score)}分</span>`;
           statusEl.style.background = this.getSeverityColor(result.severity, 0.2);
           statusEl.style.color = this.getSeverityColor(result.severity, 1);
         }
@@ -466,6 +467,22 @@ export class DetectionReportRenderer {
 
     html += '</div>';
     container.innerHTML = html;
+    container.onclick = (event) => {
+      const button = (event.target as Element).closest<HTMLButtonElement>('button[data-report-action]');
+      if (!button || !container.contains(button)) return;
+      const item = report.items.find(entry => entry.id === button.dataset.itemId);
+      if (!item) return;
+      if (button.dataset.reportAction === 'raw') {
+        this.showRawOutput(item.id);
+      } else if (button.dataset.reportAction === 'solution') {
+        const finding = item.result?.findings[Number(button.dataset.findingIndex)];
+        if (finding) {
+          (window as any).quickDetection?.generateAISolutionStream(
+            finding.title, finding.description, finding.severity, button.dataset.containerId
+          );
+        }
+      }
+    };
   }
 
   /**
@@ -516,14 +533,14 @@ export class DetectionReportRenderer {
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
           <div style="display: flex; align-items: center; gap: 8px;">
             <span style="color: ${statusColor}; font-size: 16px;">${statusIcon}</span>
-            <span style="font-weight: 500; color: var(--text-primary);">${item.name}</span>
+            <span style="font-weight: 500; color: var(--text-primary);">${escapeHtml(item.name)}</span>
           </div>
           <div style="display: flex; align-items: center; gap: 8px;">
             ${item.result?.rawOutput ? `
               <button
                 class="modern-btn secondary"
                 style="font-size: 12px; padding: 4px 8px; height: 24px;"
-                onclick="window.quickDetection?.showRawOutput('${item.id}')"
+                data-report-action="raw" data-item-id="${escapeHtml(item.id)}"
                 title="查看原始结果"
               >
                 ${Code({ theme: 'outline', size: '14', fill: 'currentColor' })}
@@ -531,7 +548,7 @@ export class DetectionReportRenderer {
               </button>
             ` : ''}
             <span style="font-size: 14px; font-weight: 600; color: ${statusColor};">
-              ${item.result ? `${item.result.score}分` : '未完成'}
+              ${item.result ? `${escapeHtml(item.result.score)}分` : '未完成'}
             </span>
           </div>
         </div>
@@ -545,7 +562,7 @@ export class DetectionReportRenderer {
         const severityBg = this.getSeverityColor(finding.severity, 0.1);
 
         // 生成唯一的容器ID，使用item.id + 索引
-        const uniqueContainerId = `ai-solution-${item.id}-${findingIndex}`;
+        const uniqueContainerId = `ai-solution-${encodeURIComponent(item.id).replace(/%/g, '_')}-${findingIndex}`;
 
         html += `
           <div style="
@@ -556,7 +573,7 @@ export class DetectionReportRenderer {
             border-left: 3px solid ${severityColor};
           ">
             <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 4px;">
-              <span style="font-weight: 500; color: var(--text-primary); font-size: 14px;">${finding.title}</span>
+              <span style="font-weight: 500; color: var(--text-primary); font-size: 14px;">${escapeHtml(finding.title)}</span>
               <span style="
                 font-size: 11px;
                 padding: 2px 8px;
@@ -567,7 +584,7 @@ export class DetectionReportRenderer {
               ">${this.getSeverityLabel(finding.severity)}</span>
             </div>
             <div style="font-size: 12px; color: var(--text-secondary); margin-bottom: 4px;">
-              ${finding.description}
+              ${escapeHtml(finding.description)}
             </div>
             ${finding.recommendation ? `
               <div style="
@@ -581,7 +598,7 @@ export class DetectionReportRenderer {
                   ${Tips({ theme: 'outline', size: '14', fill: 'var(--text-primary)' })}
                   <span>建议：</span>
                 </div>
-                <div style="color: var(--text-secondary);">${finding.recommendation}</div>
+                <div style="color: var(--text-secondary);">${escapeHtml(finding.recommendation)}</div>
                 <!-- AI解决方案容器包装器，使用相对定位 -->
                 <div id="${uniqueContainerId}-wrapper" style="position: relative; margin-top: 8px;">
                   <div id="${uniqueContainerId}"></div>
@@ -590,7 +607,7 @@ export class DetectionReportRenderer {
                   id="${uniqueContainerId}-btn"
                   class="modern-btn secondary"
                   style="margin-top: 8px; font-size: 11px; padding: 4px 12px; display: inline-flex; align-items: center; gap: 4px;"
-                  onclick="window.quickDetection?.generateAISolutionStream('${finding.title.replace(/'/g, "\\'")}', '${finding.description.replace(/'/g, "\\'")}', '${finding.severity}', '${uniqueContainerId}')">
+                  data-report-action="solution" data-item-id="${escapeHtml(item.id)}" data-finding-index="${findingIndex}" data-container-id="${uniqueContainerId}">
                   ${Robot({ theme: 'outline', size: '12', fill: 'currentColor' })}
                   <span>AI 生成解决方案</span>
                 </button>
@@ -679,7 +696,7 @@ export class DetectionReportRenderer {
           align-items: center;
         ">
           <div style="display: flex; align-items: center; gap: 8px;">
-            <h3 style="margin: 0; font-size: 16px; font-weight: 600; color: var(--text-primary);">${item.name} - 原始结果</h3>
+            <h3 style="margin: 0; font-size: 16px; font-weight: 600; color: var(--text-primary);">${escapeHtml(item.name)} - 原始结果</h3>
           </div>
           <button class="raw-output-close-btn" style="
             background: none;

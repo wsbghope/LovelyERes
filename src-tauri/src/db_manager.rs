@@ -73,10 +73,24 @@ pub struct DbStats {
 
 // ==================== Helpers ====================
 
-/// Shell-escape a password for safe embedding in single-quoted strings.
-/// Replaces `'` with `'\''` (end quote, escaped quote, start quote).
-fn shell_escape(s: &str) -> String {
-    s.replace('\'', "'\\''")
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn shell_words(value: &str) -> String {
+    value.split_whitespace().map(shell_quote).collect::<Vec<_>>().join(" ")
+}
+
+#[cfg(test)]
+mod command_tests {
+    use super::*;
+
+    #[test]
+    fn quotes_shell_metacharacters_as_data() {
+        let input = "'; touch /tmp/db-pwned; # $(id) `id`\nnext";
+        assert_eq!(shell_quote(input), "''\\''; touch /tmp/db-pwned; # $(id) `id`\nnext'");
+        assert_eq!(shell_words("GET key;id"), "'GET' 'key;id'");
+    }
 }
 
 // ==================== detect_databases ====================
@@ -220,31 +234,34 @@ pub fn execute_sql(
     sql: &str,
 ) -> Result<SqlResult, String> {
     let start = std::time::Instant::now();
-    let escaped_pass = shell_escape(&conn.password);
-    let escaped_sql = sql.replace('"', "\\\"");
+    let pass = shell_quote(&conn.password);
+    let user = shell_quote(&conn.username);
+    let host = shell_quote(&conn.host);
+    let statement = shell_quote(sql);
     let db = conn.database.as_deref().unwrap_or("");
+    let database = shell_quote(db);
 
     let cmd = match db_type {
         "mysql" => {
             format!(
-                "mysql -u{user} -p'{pass}' -h{host} -P{port} {db} -e \"{sql}\" --batch --raw 2>&1",
-                user = conn.username,
-                pass = escaped_pass,
-                host = conn.host,
+                "mysql --user={user} --password={pass} --host={host} --port={port} --database={db} --execute={sql} --batch --raw 2>&1",
+                user = user,
+                pass = pass,
+                host = host,
                 port = conn.port,
-                db = db,
-                sql = escaped_sql,
+                db = database,
+                sql = statement,
             )
         }
         "postgresql" => {
             format!(
-                "PGPASSWORD='{pass}' psql -U {user} -h {host} -p {port} -d {db} -t -A -F'|' -c \"{sql}\" 2>&1",
-                pass = escaped_pass,
-                user = conn.username,
-                host = conn.host,
+                "PGPASSWORD={pass} psql -U {user} -h {host} -p {port} -d {db} -t -A -F'|' -c {sql} 2>&1",
+                pass = pass,
+                user = user,
+                host = host,
                 port = conn.port,
-                db = if db.is_empty() { "postgres" } else { db },
-                sql = escaped_sql,
+                db = shell_quote(if db.is_empty() { "postgres" } else { db }),
+                sql = statement,
             )
         }
         "redis" => {
@@ -252,30 +269,29 @@ pub fn execute_sql(
             let auth = if conn.password.is_empty() {
                 String::new()
             } else {
-                format!("-a '{}'", escaped_pass)
+                format!("--pass {}", pass)
             };
             format!(
                 "redis-cli -h {host} -p {port} {auth} {cmd} 2>&1",
-                host = conn.host,
+                host = host,
                 port = conn.port,
                 auth = auth,
-                cmd = sql,
+                cmd = shell_words(sql),
             )
         }
         "mongodb" => {
             let auth = if conn.username.is_empty() {
                 String::new()
             } else {
-                format!("-u {user} -p '{pass}' --authenticationDatabase admin", user = conn.username, pass = escaped_pass)
+                format!("-u {user} -p {pass} --authenticationDatabase admin", user = user, pass = pass)
             };
-            let escaped_js = sql.replace('\'', "\\'");
             format!(
-                "mongosh --host {host} --port {port} {auth} {db} --eval '{js}' --quiet 2>&1",
-                host = conn.host,
+                "mongosh --host {host} --port {port} {auth} {db} --eval {js} --quiet 2>&1",
+                host = host,
                 port = conn.port,
                 auth = auth,
-                db = if db.is_empty() { "admin" } else { db },
-                js = escaped_js,
+                db = shell_quote(if db.is_empty() { "admin" } else { db }),
+                js = statement,
             )
         }
         _ => return Err(format!("不支持的数据库类型: {}", db_type)),
@@ -746,41 +762,46 @@ pub fn backup_database(
     conn: &DbConnection,
     database: &str,
 ) -> Result<String, String> {
-    let escaped_pass = shell_escape(&conn.password);
+    let pass = shell_quote(&conn.password);
+    let user = shell_quote(&conn.username);
+    let host = shell_quote(&conn.host);
+    let db = shell_quote(database);
     let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string();
+    let safe_name: String = database.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect();
+    let backup_path = shell_quote(&format!("/tmp/backup_{}_{}.sql", safe_name, timestamp));
 
     let cmd = match db_type {
         "mysql" => {
             format!(
-                "mysqldump -u{user} -p'{pass}' -h{host} -P{port} {db} > /tmp/backup_{db}_{ts}.sql 2>&1 && echo 'OK:/tmp/backup_{db}_{ts}.sql'",
-                user = conn.username,
-                pass = escaped_pass,
-                host = conn.host,
+                "mysqldump --user={user} --password={pass} --host={host} --port={port} {db} > {path} 2>&1 && echo OK:{path}",
+                user = user,
+                pass = pass,
+                host = host,
                 port = conn.port,
-                db = database,
-                ts = timestamp,
+                db = db,
+                path = backup_path,
             )
         }
         "postgresql" => {
             format!(
-                "PGPASSWORD='{pass}' pg_dump -U {user} -h {host} -p {port} {db} > /tmp/backup_{db}_{ts}.sql 2>&1 && echo 'OK:/tmp/backup_{db}_{ts}.sql'",
-                pass = escaped_pass,
-                user = conn.username,
-                host = conn.host,
+                "PGPASSWORD={pass} pg_dump -U {user} -h {host} -p {port} {db} > {path} 2>&1 && echo OK:{path}",
+                pass = pass,
+                user = user,
+                host = host,
                 port = conn.port,
-                db = database,
-                ts = timestamp,
+                db = db,
+                path = backup_path,
             )
         }
         "redis" => {
             let auth = if conn.password.is_empty() {
                 String::new()
             } else {
-                format!("-a '{}'", escaped_pass)
+                format!("--pass {}", pass)
             };
             format!(
                 "redis-cli -h {host} -p {port} {auth} BGSAVE 2>&1",
-                host = conn.host,
+                host = host,
                 port = conn.port,
                 auth = auth,
             )
@@ -789,14 +810,14 @@ pub fn backup_database(
             let auth = if conn.username.is_empty() {
                 String::new()
             } else {
-                format!("-u {user} -p '{pass}' --authenticationDatabase admin", user = conn.username, pass = escaped_pass)
+                format!("-u {user} -p {pass} --authenticationDatabase admin", user = user, pass = pass)
             };
             format!(
                 "mongodump --host {host} --port {port} {auth} --db {db} --out /tmp/backup_{ts}/ 2>&1 && echo 'OK:/tmp/backup_{ts}/'",
-                host = conn.host,
+                host = host,
                 port = conn.port,
                 auth = auth,
-                db = database,
+                db = db,
                 ts = timestamp,
             )
         }
@@ -829,17 +850,17 @@ pub fn get_db_stats(
         "mysql" => {
             let commands = vec![
                 format!(
-                    "mysql -u{user} -p'{pass}' -h{host} -P{port} -e \"SHOW GLOBAL STATUS WHERE Variable_name IN ('Uptime','Threads_connected','Threads_running','Slow_queries','Connections')\" --batch --raw 2>&1",
-                    user = conn.username,
-                    pass = shell_escape(&conn.password),
-                    host = conn.host,
+                    "mysql --user={user} --password={pass} --host={host} -P{port} -e \"SHOW GLOBAL STATUS WHERE Variable_name IN ('Uptime','Threads_connected','Threads_running','Slow_queries','Connections')\" --batch --raw 2>&1",
+                    user = shell_quote(&conn.username),
+                    pass = shell_quote(&conn.password),
+                    host = shell_quote(&conn.host),
                     port = conn.port,
                 ),
                 format!(
-                    "mysql -u{user} -p'{pass}' -h{host} -P{port} -e \"SELECT ROUND(SUM(data_length + index_length) / 1024 / 1024, 2) AS size_mb FROM information_schema.tables\" --batch --raw 2>&1",
-                    user = conn.username,
-                    pass = shell_escape(&conn.password),
-                    host = conn.host,
+                    "mysql --user={user} --password={pass} --host={host} -P{port} -e \"SELECT ROUND(SUM(data_length + index_length) / 1024 / 1024, 2) AS size_mb FROM information_schema.tables\" --batch --raw 2>&1",
+                    user = shell_quote(&conn.username),
+                    pass = shell_quote(&conn.password),
+                    host = shell_quote(&conn.host),
                     port = conn.port,
                 ),
             ];
@@ -896,24 +917,24 @@ pub fn get_db_stats(
             })
         }
         "postgresql" => {
-            let escaped_pass = shell_escape(&conn.password);
-            let db = conn.database.as_deref().unwrap_or("postgres");
+            let escaped_pass = shell_quote(&conn.password);
+            let db = shell_quote(conn.database.as_deref().unwrap_or("postgres"));
             let commands = vec![
                 format!(
-                    "PGPASSWORD='{pass}' psql -U {user} -h {host} -p {port} -d {db} -t -A -F'|' -c \"SELECT date_trunc('second', current_timestamp - pg_postmaster_start_time()) as uptime\" 2>&1",
-                    pass = escaped_pass, user = conn.username, host = conn.host, port = conn.port, db = db,
+                    "PGPASSWORD={pass} psql -U {user} -h {host} -p {port} -d {db} -t -A -F'|' -c \"SELECT date_trunc('second', current_timestamp - pg_postmaster_start_time()) as uptime\" 2>&1",
+                    pass = escaped_pass, user = shell_quote(&conn.username), host = shell_quote(&conn.host), port = conn.port, db = db,
                 ),
                 format!(
-                    "PGPASSWORD='{pass}' psql -U {user} -h {host} -p {port} -d {db} -t -A -F'|' -c \"SELECT count(*) FROM pg_stat_activity\" 2>&1",
-                    pass = escaped_pass, user = conn.username, host = conn.host, port = conn.port, db = db,
+                    "PGPASSWORD={pass} psql -U {user} -h {host} -p {port} -d {db} -t -A -F'|' -c \"SELECT count(*) FROM pg_stat_activity\" 2>&1",
+                    pass = escaped_pass, user = shell_quote(&conn.username), host = shell_quote(&conn.host), port = conn.port, db = db,
                 ),
                 format!(
-                    "PGPASSWORD='{pass}' psql -U {user} -h {host} -p {port} -d {db} -t -A -F'|' -c \"SELECT count(*) FROM pg_stat_activity WHERE state='active'\" 2>&1",
-                    pass = escaped_pass, user = conn.username, host = conn.host, port = conn.port, db = db,
+                    "PGPASSWORD={pass} psql -U {user} -h {host} -p {port} -d {db} -t -A -F'|' -c \"SELECT count(*) FROM pg_stat_activity WHERE state='active'\" 2>&1",
+                    pass = escaped_pass, user = shell_quote(&conn.username), host = shell_quote(&conn.host), port = conn.port, db = db,
                 ),
                 format!(
-                    "PGPASSWORD='{pass}' psql -U {user} -h {host} -p {port} -d {db} -t -A -F'|' -c \"SELECT pg_size_pretty(sum(pg_database_size(datname))) FROM pg_database\" 2>&1",
-                    pass = escaped_pass, user = conn.username, host = conn.host, port = conn.port, db = db,
+                    "PGPASSWORD={pass} psql -U {user} -h {host} -p {port} -d {db} -t -A -F'|' -c \"SELECT pg_size_pretty(sum(pg_database_size(datname))) FROM pg_database\" 2>&1",
+                    pass = escaped_pass, user = shell_quote(&conn.username), host = shell_quote(&conn.host), port = conn.port, db = db,
                 ),
             ];
 

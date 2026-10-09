@@ -14,18 +14,14 @@ edition = "2021"
 name = "lovelyres_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
-[[example]]
-name = "kali_resource_smoke"
-path = "../tmp/kali-resource-smoke/src/main.rs"
-
 [build-dependencies]
-tauri-build = { version = "2.1", features = [] }
+tauri-build = { version = "=2.4.1", features = [] }
 
 [dependencies]
-tauri = { version = "2.1", features = ["protocol-asset", "unstable", "devtools"] }
-tauri-plugin-opener = "2.0"
-tauri-plugin-dialog = "2.0"
-tauri-plugin-fs = "2.0"
+tauri = { version = "=2.8.5", features = ["unstable", "devtools"] }
+tauri-plugin-opener = "=2.5.0"
+tauri-plugin-dialog = "=2.4.0"
+tauri-plugin-fs = "=2.4.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }

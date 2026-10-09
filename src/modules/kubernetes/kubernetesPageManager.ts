@@ -73,6 +73,7 @@ export class KubernetesPageManager {
             this.boundInputHandler = null;
         }
         this.globalEventsBound = false;
+        this.initialized = false;
     }
 
     public async refresh(showNotification = false): Promise<void> {

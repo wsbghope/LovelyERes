@@ -14,6 +14,7 @@ import {
   Stopwatch,
 } from '@icon-park/svg';
 import type { DetectionReport } from './quickDetectionManager';
+import { escapeHtml } from '../utils/safeHtml';
 
 export class DetectionAIManager {
   public currentReport: DetectionReport | null = null;
@@ -550,7 +551,7 @@ export class DetectionAIManager {
           font-size: 16px;
           color: var(--text-primary);
           font-weight: 500;
-        ">${message}</div>
+        ">${escapeHtml(message)}</div>
         <div style="
           font-size: 13px;
           color: var(--text-secondary);
@@ -655,12 +656,12 @@ export class DetectionAIManager {
               font-weight: 600;
               color: var(--text-primary);
               margin-bottom: 8px;
-            ">问题: ${title}</div>
+            ">问题: ${escapeHtml(title)}</div>
             <div style="
               font-size: 13px;
               color: var(--text-secondary);
               line-height: 1.5;
-            ">${description}</div>
+            ">${escapeHtml(description)}</div>
           </div>
 
           <!-- 解决步骤 -->
@@ -686,7 +687,7 @@ export class DetectionAIManager {
                   color: var(--text-primary);
                   line-height: 1.8;
                 ">
-                  ${solution.steps.map((step: string) => `<li style="margin-bottom: 8px;">${step}</li>`).join('')}
+                  ${solution.steps.map((step: string) => `<li style="margin-bottom: 8px;">${escapeHtml(step)}</li>`).join('')}
                 </ol>
               </div>
             </div>
@@ -716,7 +717,7 @@ export class DetectionAIManager {
                   color: #92400e;
                   line-height: 1.8;
                 ">
-                  ${solution.risks.map((risk: string) => `<li style="margin-bottom: 8px;">${risk}</li>`).join('')}
+                  ${solution.risks.map((risk: string) => `<li style="margin-bottom: 8px;">${escapeHtml(risk)}</li>`).join('')}
                 </ul>
               </div>
             </div>
@@ -735,7 +736,7 @@ export class DetectionAIManager {
               color: var(--text-secondary);
             ">
               ${Stopwatch({ theme: 'outline', size: '16', fill: 'var(--text-secondary)' })}
-              <span>预计耗时: ${solution.timeEstimate}</span>
+              <span>预计耗时: ${escapeHtml(solution.timeEstimate)}</span>
             </div>
           ` : ''}
 
@@ -763,7 +764,7 @@ export class DetectionAIManager {
               font-family: var(--font-mono, monospace);
               max-height: 300px;
               overflow-y: auto;
-            ">${solution.solution}</div>
+            ">${escapeHtml(solution.solution)}</div>
           </details>
         </div>
 
@@ -775,7 +776,7 @@ export class DetectionAIManager {
           justify-content: flex-end;
           gap: 12px;
         ">
-          <button onclick="navigator.clipboard.writeText(this.dataset.solution).then(() => window.showNotification?.('已复制到剪贴板', 'success'))" data-solution="${solution.solution.replace(/"/g, '&quot;')}" style="
+          <button class="ai-solution-copy" style="
             padding: 8px 16px;
             background: var(--bg-secondary);
             border: 1px solid var(--border-color);
@@ -800,6 +801,11 @@ export class DetectionAIManager {
     `;
 
     document.body.appendChild(modal);
+    modal.querySelector('.ai-solution-copy')?.addEventListener('click', () => {
+      navigator.clipboard.writeText(String(solution.solution)).then(() =>
+        window.showNotification?.('已复制到剪贴板', 'success')
+      );
+    });
 
     // 点击背景关闭
     modal.addEventListener('click', (e) => {

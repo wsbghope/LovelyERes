@@ -90,10 +90,8 @@ fn extract_length(info: &str) -> String {
     for word_pair in info.split_whitespace().collect::<Vec<&str>>().windows(2) {
         if word_pair[0] == "length" || word_pair[0] == "len" {
             let num_str = word_pair[1].trim_end_matches([',', ':']);
-            if !num_str.is_empty() {
-                if num_str.parse::<u64>().is_ok() {
-                    return num_str.to_string();
-                }
+            if !num_str.is_empty() && num_str.parse::<u64>().is_ok() {
+                return num_str.to_string();
             }
         }
     }
