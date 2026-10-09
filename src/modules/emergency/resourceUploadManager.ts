@@ -108,7 +108,6 @@ class ResourceUploadManager {
   private loading = false;
   /** 当前活跃的宿主元素（overlay 或 pageContainer），事件监听绑定在它上面 */
   private host: HTMLElement | null = null;
-  private initialSearch = '';
 
   /**
    * 以弹窗模式打开（用于跨页面跳转，如抓包页面提示前往文件上传）。
@@ -116,9 +115,11 @@ class ResourceUploadManager {
    */
   async show(search = ''): Promise<void> {
     this.pageContainer = null;
-    this.host = null;
     this.ensureModal();
-    this.initialSearch = search;
+    // ensureModal 在 overlay 已存在时会早返回，这里统一把 host 指回 overlay，
+    // 避免 scan() 因 host 为空而提前退出
+    this.host = this.overlay;
+    this.search = search.trim().toLowerCase();
     this.overlay!.classList.add('visible');
     const input = this.overlay!.querySelector<HTMLInputElement>('#em-resource-search');
     if (input) input.value = search;
@@ -134,10 +135,10 @@ class ResourceUploadManager {
    * 容器由调用方提供（#file-upload-page），管理器在容器内渲染完整 UI。
    */
   async mountInContainer(container: HTMLElement, search = ''): Promise<void> {
-    // 如果已在另一个容器渲染过，先清理旧的事件绑定
+    // 若弹窗还开着，先收起；页面模式与弹窗模式互斥
     this.overlay?.classList.remove('visible');
     this.pageContainer = container;
-    this.initialSearch = search;
+    this.search = search.trim().toLowerCase();
 
     container.innerHTML = `<div class="em-resource-page">${CORE_TEMPLATE}</div>`;
 
