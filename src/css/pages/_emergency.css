@@ -1018,7 +1018,48 @@
   overflow: hidden;
 }
 
-.em-resource-page .em-resource-core {
+/* 页面级标题栏 */
+.em-resource-page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px 10px;
+  flex-shrink: 0;
+}
+
+.em-resource-page-header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.em-resource-page-header-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(248, 113, 113, 0.12);
+  color: #f87171;
+  flex-shrink: 0;
+}
+
+.em-resource-page-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.em-resource-page-subtitle {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* 内容卡片 */
+.em-resource-card {
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -1026,17 +1067,40 @@
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
   border-radius: 10px;
-  margin: 12px;
-}
-
-/* 页面模式下隐藏"取消"按钮（已在页面上，无需关闭操作） */
-.em-resource-page .em-resource-close,
-.em-resource-page .em-resource-footer [data-action="close"] {
-  display: none;
+  margin: 0 12px 12px;
 }
 
 /* 页面模式下表格区域自适应填充 */
 .em-resource-page .em-resource-table-wrap {
   flex: 1;
   overflow: auto;
+}
+
+/* 上传进度提示 */
+.em-resource-uploading {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--primary-color);
+  font-weight: 500;
+}
+
+.em-resource-uploading::before {
+  content: '';
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--primary-color);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: em-resource-spin 0.7s linear infinite;
+}
+
+@keyframes em-resource-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* 按钮禁用状态 */
+.em-resource-btn[disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
 }

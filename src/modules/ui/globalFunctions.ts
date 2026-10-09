@@ -484,6 +484,11 @@ export function initGlobalFunctions(deps: GlobalFunctionsDeps): void {
       if (pageId !== 'java-hot-update') {
         (window as any).__jhuManager?.deactivate?.();
       }
+      if (pageId !== 'file-upload') {
+        import('../emergency/resourceUploadManager').then(({ resourceUploadManager }) => {
+          resourceUploadManager.deactivate();
+        }).catch(() => {});
+      }
 
       // 系统概览：仅在无缓存时才重新加载
       if (pageId === 'system-info' && sshConnectionManager.isConnected()) {

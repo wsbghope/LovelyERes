@@ -64,16 +64,11 @@ export const summarizeResourceSelection = (tools: ResourceTool[], targetArchitec
   mismatchCount: tools.filter(tool => tool.architecture !== targetArchitecture).length,
 });
 
-/** 核心模板 HTML — 页面模式和弹窗模式共用 */
-const CORE_TEMPLATE = `
-  <div class="em-resource-core">
-    <header class="em-resource-header">
-      <div>
-        <h3 id="em-resource-title">应急工具上传</h3>
-        <p>扫描 LovelyERes-Resources，所有上传均由你勾选确认。</p>
-      </div>
-      <button class="em-resource-close" data-action="close" title="关闭">×</button>
-    </header>
+/**
+ * 控制区 + 表格 + 底栏 — 页面模式和弹窗模式共用。
+ * 不含标题栏（弹窗模式有自己的 em-resource-header，页面模式有独立的 page-header）。
+ */
+const BODY_TEMPLATE = `
     <div class="em-resource-controls">
       <label>工具架构
         <select id="em-resource-arch"></select>
@@ -81,8 +76,8 @@ const CORE_TEMPLATE = `
       <label class="em-resource-search-label">
         <input id="em-resource-search" type="search" placeholder="搜索 tcpdump、curl、wget、nc...">
       </label>
-      <button class="em-resource-btn" data-action="scan">重新扫描</button>
-      <button class="em-resource-btn" data-action="open-dir">打开资源目录</button>
+      <button class="em-resource-btn" data-action="scan" id="em-resource-btn-scan">重新扫描</button>
+      <button class="em-resource-btn" data-action="open-dir" id="em-resource-btn-dir">打开资源目录</button>
     </div>
     <div id="em-resource-summary" class="em-resource-summary"></div>
     <div class="em-resource-table-wrap">
@@ -94,35 +89,69 @@ const CORE_TEMPLATE = `
     <footer class="em-resource-footer">
       <label class="em-resource-verify"><input id="em-resource-verify" type="checkbox"> 上传后尝试执行 --version/--help</label>
       <span id="em-resource-selection">已选择 0 项</span>
-      <button class="em-resource-btn" data-action="close">取消</button>
-      <button class="em-resource-btn primary" data-action="upload">上传所选工具</button>
-    </footer>
+      <button class="em-resource-btn primary" data-action="upload" id="em-resource-btn-upload">上传所选工具</button>
+    </footer>`;
+
+/** 弹窗模式完整模板（含标题栏） */
+const MODAL_TEMPLATE = `
+  <div class="em-resource-core">
+    <header class="em-resource-header">
+      <div>
+        <h3>应急工具上传</h3>
+        <p>扫描 LovelyERes-Resources，所有上传均由你勾选确认。</p>
+      </div>
+      <button class="em-resource-close" data-action="close" title="关闭">×</button>
+    </header>
+    ${BODY_TEMPLATE}
+  </div>`;
+
+/** 页面模式完整模板（含页面级标题栏，与抓包/日志审计页面视觉一致） */
+const PAGE_TEMPLATE = `
+  <div class="em-resource-page">
+    <div class="em-resource-page-header">
+      <div class="em-resource-page-header-left">
+        <div class="em-resource-page-header-icon">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4"/><path d="M7 9l5-5 5 5"/><path d="M5 14v5h14v-5"/></svg>
+        </div>
+        <div>
+          <h2 class="em-resource-page-title">文件上传</h2>
+          <div class="em-resource-page-subtitle">应急工具部署 · SHA-256 校验 · 不覆盖系统命令</div>
+        </div>
+      </div>
+    </div>
+    <div class="em-resource-card">${BODY_TEMPLATE}</div>
   </div>`;
 
 class ResourceUploadManager {
   private overlay: HTMLElement | null = null;
-  private pageContainer: HTMLElement | null = null;
   private result: ResourceScanResult | null = null;
   private selectedKeys = new Set<string>();
   private search = '';
   private loading = false;
-  /** 当前活跃的宿主元素（overlay 或 pageContainer），事件监听绑定在它上面 */
+  /** 当前活跃的宿主元素（overlay 或页面容器） */
   private host: HTMLElement | null = null;
+  /** 已绑定事件的根元素（用于切换 host 时移除旧监听器） */
+  private boundRoot: HTMLElement | null = null;
+  /** 存储已绑定的处理函数引用，便于精确 removeEventListener */
+  private boundClick: ((e: Event) => void) | null = null;
+  private boundInput: ((e: Event) => void) | null = null;
+  private boundChange: ((e: Event) => void) | null = null;
+  private boundBodyChange: ((e: Event) => void) | null = null;
+
+  // ──── 公共 API ────
 
   /**
-   * 以弹窗模式打开（用于跨页面跳转，如抓包页面提示前往文件上传）。
-   * 在 file-upload 作为独立页面后，此方法仍保留供需要弹窗的场景使用。
+   * 以弹窗模式打开（用于跨页面跳转等需要浮层的场景）。
    */
   async show(search = ''): Promise<void> {
-    this.pageContainer = null;
+    this.detachListeners();
     this.ensureModal();
-    // ensureModal 在 overlay 已存在时会早返回，这里统一把 host 指回 overlay，
-    // 避免 scan() 因 host 为空而提前退出
     this.host = this.overlay;
     this.search = search.trim().toLowerCase();
     this.overlay!.classList.add('visible');
     const input = this.overlay!.querySelector<HTMLInputElement>('#em-resource-search');
     if (input) input.value = search;
+    this.attachListeners(this.overlay!);
     await this.scan();
   }
 
@@ -132,81 +161,110 @@ class ResourceUploadManager {
 
   /**
    * 以页面内联模式渲染到指定容器（用于「应急响应 → 文件上传」页面）。
-   * 容器由调用方提供（#file-upload-page），管理器在容器内渲染完整 UI。
    */
   async mountInContainer(container: HTMLElement, search = ''): Promise<void> {
-    // 若弹窗还开着，先收起；页面模式与弹窗模式互斥
+    // 先清理上一轮的监听器，防止反复切换页面导致事件堆积
+    this.detachListeners();
     this.overlay?.classList.remove('visible');
-    this.pageContainer = container;
-    this.search = search.trim().toLowerCase();
 
-    container.innerHTML = `<div class="em-resource-page">${CORE_TEMPLATE}</div>`;
-
-    // 绑定事件到页面容器
-    this.bindEvents(container);
     this.host = container;
+    this.search = search.trim().toLowerCase();
+    container.innerHTML = PAGE_TEMPLATE;
 
     const input = container.querySelector<HTMLInputElement>('#em-resource-search');
     if (input) input.value = search;
+
+    this.attachListeners(container);
     await this.scan();
   }
 
-  // ──── 弹窗模式：创建 overlay ────
+  /**
+   * 离开页面时调用：移除事件监听器、释放 DOM 引用。
+   * 确保 globalFunctions 的页面切换逻辑中 pageId !== 'file-upload' 时调用。
+   */
+  deactivate(): void {
+    this.detachListeners();
+    this.host = null;
+    this.loading = false;
+  }
+
+  // ──── 内部：弹窗创建 ────
 
   private ensureModal(): void {
     if (this.overlay) return;
     const overlay = document.createElement('div');
     overlay.className = 'em-resource-overlay';
-    overlay.innerHTML = CORE_TEMPLATE;
+    overlay.innerHTML = MODAL_TEMPLATE;
     document.body.appendChild(overlay);
     this.overlay = overlay;
-    this.bindEvents(overlay);
-    this.host = overlay;
   }
 
-  // ──── 事件绑定（共用） ────
+  // ──── 内部：事件监听管理 ────
 
-  private bindEvents(root: HTMLElement): void {
-    root.addEventListener('click', event => {
+  private attachListeners(root: HTMLElement): void {
+    // 安全起见先解绑（正常流程下 detachListeners 已调用，此处为防御性编程）
+    this.detachListeners();
+
+    this.boundClick = (event: Event) => {
       const target = (event.target as HTMLElement).closest<HTMLElement>('[data-action]');
       if (!target) return;
       const action = target.dataset.action;
-      if (action === 'close') {
-        if (this.overlay && root === this.overlay) {
-          this.close();
-        } else if (this.pageContainer) {
-          // 页面模式下"取消"不做任何操作（已在页面上）
-        }
-      }
+      if (action === 'close' && root === this.overlay) this.close();
       if (action === 'scan') void this.scan();
       if (action === 'open-dir') void this.openDirectory();
       if (action === 'upload') void this.uploadSelected();
-    });
-    root.querySelector('#em-resource-search')?.addEventListener('input', event => {
+    };
+    this.boundInput = (event: Event) => {
       this.search = (event.target as HTMLInputElement).value.trim().toLowerCase();
       this.renderTools();
-    });
-    root.querySelector('#em-resource-arch')?.addEventListener('change', event => {
+    };
+    this.boundChange = (event: Event) => {
       void this.scan((event.target as HTMLSelectElement).value);
-    });
-    root.querySelector('#em-resource-body')?.addEventListener('change', event => {
+    };
+    this.boundBodyChange = (event: Event) => {
       const checkbox = (event.target as HTMLElement).closest<HTMLInputElement>('input[data-tool-key]');
       if (!checkbox) return;
       if (checkbox.checked) this.selectedKeys.add(checkbox.dataset.toolKey!);
       else this.selectedKeys.delete(checkbox.dataset.toolKey!);
       this.updateSelection();
+    };
+
+    root.addEventListener('click', this.boundClick);
+    root.querySelector('#em-resource-search')?.addEventListener('input', this.boundInput);
+    root.querySelector('#em-resource-arch')?.addEventListener('change', this.boundChange);
+    root.querySelector('#em-resource-body')?.addEventListener('change', this.boundBodyChange);
+
+    this.boundRoot = root;
+  }
+
+  private detachListeners(): void {
+    if (!this.boundRoot) return;
+    if (this.boundClick) this.boundRoot.removeEventListener('click', this.boundClick);
+    if (this.boundInput) this.boundRoot.querySelector('#em-resource-search')?.removeEventListener('input', this.boundInput);
+    if (this.boundChange) this.boundRoot.querySelector('#em-resource-arch')?.removeEventListener('change', this.boundChange);
+    if (this.boundBodyChange) this.boundRoot.querySelector('#em-resource-body')?.removeEventListener('change', this.boundBodyChange);
+    this.boundRoot = null;
+    this.boundClick = null;
+    this.boundInput = null;
+    this.boundChange = null;
+    this.boundBodyChange = null;
+  }
+
+  // ──── 内部：加载状态 ────
+
+  private setLoadingButtons(disabled: boolean): void {
+    this.host?.querySelectorAll<HTMLElement>('[data-action]').forEach(btn => {
+      btn.setAttribute('data-disabled', disabled ? '1' : '0');
+      (btn as HTMLButtonElement).disabled = disabled;
     });
   }
 
-  // ──── 以下方法通过 this.host 访问当前活跃的 DOM ────
-
-  private query<T extends HTMLElement>(selector: string): T | null {
-    return (this.host ?? this.overlay)?.querySelector<T>(selector) ?? null;
-  }
+  // ──── 内部：扫描 ────
 
   private async scan(architecture?: string): Promise<void> {
     if (this.loading || !this.host) return;
     this.loading = true;
+    this.setLoadingButtons(true);
     this.setBusy('正在校验并扫描本地工具包，同时检查目标机命令...');
     try {
       this.result = await invoke<ResourceScanResult>('scan_resource_tools', {
@@ -220,18 +278,21 @@ class ResourceUploadManager {
       this.setBusy(`扫描失败：${String(error)}`, true);
     } finally {
       this.loading = false;
+      this.setLoadingButtons(false);
     }
   }
 
   private setBusy(message: string, isError = false): void {
-    const summary = this.query<HTMLElement>('#em-resource-summary');
-    const body = this.query<HTMLElement>('#em-resource-body');
+    const summary = this.host?.querySelector<HTMLElement>('#em-resource-summary');
+    const body = this.host?.querySelector<HTMLElement>('#em-resource-body');
     if (summary) {
       summary.classList.toggle('error', isError);
       summary.textContent = message;
     }
     if (body) body.innerHTML = `<tr><td colspan="6" class="em-resource-empty">${escapeHtml(message)}</td></tr>`;
   }
+
+  // ──── 内部：渲染 ────
 
   private renderArchitectureOptions(): void {
     if (!this.result || !this.host) return;
@@ -288,6 +349,8 @@ class ResourceUploadManager {
     if (label) label.textContent = `已选择 ${this.selectedKeys.size} 项`;
   }
 
+  // ──── 内部：操作 ────
+
   private async openDirectory(): Promise<void> {
     try {
       const root = this.result?.root || await invoke<string>('get_resource_directory');
@@ -317,6 +380,13 @@ class ResourceUploadManager {
 
     const verify = this.host?.querySelector<HTMLInputElement>('#em-resource-verify')?.checked ?? false;
     this.loading = true;
+    this.setLoadingButtons(true);
+    // 上传期间在摘要区给出进度提示
+    const summary = this.host?.querySelector<HTMLElement>('#em-resource-summary');
+    if (summary) {
+      summary.classList.remove('error');
+      summary.innerHTML = `<span class="em-resource-uploading">正在上传 ${this.selectedKeys.size} 个工具，请稍候…</span>`;
+    }
     try {
       const deployments = await invoke<ResourceDeployment[]>('deploy_resource_tools', {
         request: { keys: [...this.selectedKeys], verifyAfterUpload: verify },
@@ -336,6 +406,7 @@ class ResourceUploadManager {
       await showAlert({ title: '上传失败', message: String(error), type: 'error' });
     } finally {
       this.loading = false;
+      this.setLoadingButtons(false);
     }
   }
 }
