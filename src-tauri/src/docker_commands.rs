@@ -147,12 +147,14 @@ pub async fn create_container_terminal_window(
         600.0,
     ).map_err(|e| format!("创建容器终端窗口失败: {}", e))?;
 
-    // 设置窗口数据
-    window.eval(&format!(
-        "window.containerInfo = {{ name: '{}', id: '{}' }};",
-        container_name.replace("'", "\\'"),
-        container_id.replace("'", "\\'")
-    )).map_err(|e| format!("设置窗口数据失败: {}", e))?;
+    // JSON string encoding also handles backslashes and line separators in remote names.
+    let container_info = serde_json::to_string(&serde_json::json!({
+        "name": container_name,
+        "id": container_id,
+    }))
+    .map_err(|e| format!("序列化容器信息失败: {}", e))?;
+    window.eval(&format!("window.containerInfo = {container_info};"))
+        .map_err(|e| format!("设置窗口数据失败: {}", e))?;
 
     Ok(window_label)
 }

@@ -4,6 +4,7 @@
  */
 
 import { sshConnectionManager } from '../remote/sshConnectionManager';
+import { invokeWithHostKeyConfirmation } from '../ssh/hostKeyVerification';
 import { showConfirm, showPrompt } from './confirmDialog';
 import { busyboxManager } from '../core/busyboxManager';
 
@@ -558,7 +559,7 @@ async function testConnection(): Promise<void> {
   if (testBtn) { testBtn.disabled = true; testBtn.textContent = '测试中...'; }
 
   try {
-    await (window as any).__TAURI__.core.invoke('ssh_test_connection', {
+    await invokeWithHostKeyConfirmation('ssh_test_connection', {
       host, port, username, password: authType === 'password' ? password : '',
       authType, keyPath: authType === 'key' ? keyPath : '',
       keyPassphrase: authType === 'key' ? keyPassphrase : '',

@@ -5,6 +5,7 @@
  */
 
 import { SSHConfigManager as ConfigManager } from '../ssh/connectionManager';
+import { invokeWithHostKeyConfirmation } from '../ssh/hostKeyVerification';
 
 export interface SSHConnectionInfo {
   id?: string; // 连接配置ID
@@ -75,7 +76,7 @@ export class SSHSessionManager {
       }
 
       console.log('⚡ 调用 Tauri invoke: ssh_connect_direct, authType:', authType);
-      await (window as any).__TAURI__.core.invoke('ssh_connect_direct', {
+      await invokeWithHostKeyConfirmation('ssh_connect_direct', {
         host,
         port: portNumber,
         username,

@@ -3,7 +3,8 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use crate::ssh_manager_russh::SSHManagerRussh;
+use std::time::Duration;
+use crate::ssh_manager_russh::{SSHManagerRussh, TerminalOutput};
 
 // ==================== Types ====================
 
@@ -77,8 +78,182 @@ fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
-fn shell_words(value: &str) -> String {
-    value.split_whitespace().map(shell_quote).collect::<Vec<_>>().join(" ")
+fn shell_words(value: &str) -> Result<String, String> {
+    #[derive(Clone, Copy, PartialEq)]
+    enum Quote {
+        None,
+        Single,
+        Double,
+    }
+
+    let mut words = Vec::new();
+    let mut current = String::new();
+    let mut quote = Quote::None;
+    let mut escaped = false;
+    let mut started = false;
+
+    for ch in value.chars() {
+        if escaped {
+            current.push(ch);
+            escaped = false;
+            started = true;
+            continue;
+        }
+
+        match quote {
+            Quote::None => match ch {
+                '\\' => {
+                    escaped = true;
+                    started = true;
+                }
+                '\'' => {
+                    quote = Quote::Single;
+                    started = true;
+                }
+                '"' => {
+                    quote = Quote::Double;
+                    started = true;
+                }
+                ch if ch.is_whitespace() => {
+                    if started {
+                        words.push(std::mem::take(&mut current));
+                        started = false;
+                    }
+                }
+                _ => {
+                    current.push(ch);
+                    started = true;
+                }
+            },
+            Quote::Single => {
+                if ch == '\'' {
+                    quote = Quote::None;
+                } else {
+                    current.push(ch);
+                }
+            }
+            Quote::Double => match ch {
+                '"' => quote = Quote::None,
+                '\\' => escaped = true,
+                _ => current.push(ch),
+            },
+        }
+    }
+
+    if escaped {
+        return Err("Redis 命令末尾存在未完成的转义字符".to_string());
+    }
+    if quote != Quote::None {
+        return Err("Redis 命令存在未闭合的引号".to_string());
+    }
+    if started {
+        words.push(current);
+    }
+    if words.is_empty() {
+        return Err("Redis 命令不能为空".to_string());
+    }
+
+    Ok(words
+        .iter()
+        .map(|word| shell_quote(word))
+        .collect::<Vec<_>>()
+        .join(" "))
+}
+
+fn terminal_output_error(output: &TerminalOutput, context: &str) -> Option<String> {
+    let text = output.output.trim();
+    if output.timed_out {
+        return Some(if text.is_empty() {
+            format!("{context}执行超时")
+        } else {
+            text.to_string()
+        });
+    }
+
+    match output.exit_code {
+        Some(0) => None,
+        Some(code) => Some(if text.is_empty() {
+            format!("{context}执行失败，退出码: {code}")
+        } else {
+            format!("{text}（退出码: {code}）")
+        }),
+        None => Some(if text.is_empty() {
+            format!("{context}未返回退出状态")
+        } else {
+            format!("{text}（未返回退出状态）")
+        }),
+    }
+}
+
+fn database_output_error(db_type: &str, raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    let generic_error = trimmed.starts_with("ERROR")
+        || trimmed.starts_with("FATAL:")
+        || trimmed.lines().any(|line| {
+            let line = line.trim_start();
+            line.starts_with("ERROR:") || line.starts_with("FATAL:")
+        });
+    let database_error = match db_type {
+        "redis" => trimmed
+            .lines()
+            .any(|line| line.trim_start().starts_with("(error)")),
+        "mongodb" => {
+            trimmed.contains("MongoServerError:")
+                || trimmed.contains("MongoNetworkError:")
+                || trimmed.contains("MongoParseError:")
+        }
+        _ => false,
+    };
+
+    (generic_error || database_error).then(|| trimmed.to_string())
+}
+
+fn service_is_active(status: &str) -> bool {
+    // systemctl can return one line per candidate unit; "inactive" is not active.
+    status.lines().any(|line| line.trim() == "active")
+}
+
+fn sql_string_literal(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
+fn mysql_identifier(value: &str) -> String {
+    format!("`{}`", value.replace('`', "``"))
+}
+
+fn mysql_database_option(database: &str) -> String {
+    if database.is_empty() {
+        String::new()
+    } else {
+        format!("--database={}", shell_quote(database))
+    }
+}
+
+fn command_with_password_env(command: &str, env_name: &str) -> String {
+    format!(
+        "DB_PASSWORD=$(cat; printf x); DB_PASSWORD=${{DB_PASSWORD%x}}; export {env_name}=\"$DB_PASSWORD\"; unset DB_PASSWORD; {command}"
+    )
+}
+
+fn execute_with_password(
+    ssh: &SSHManagerRussh,
+    command: &str,
+    password: &str,
+    password_env: Option<&str>,
+    timeout: Duration,
+) -> Result<crate::ssh_manager_russh::TerminalOutput, String> {
+    if password.is_empty() {
+        return ssh.execute_command_with_timeout(command, timeout);
+    }
+
+    let input = match password_env {
+        Some(env_name) => {
+            let wrapped = command_with_password_env(command, env_name);
+            return ssh.execute_command_with_input(&wrapped, password.as_bytes(), timeout);
+        }
+        None => format!("{password}\n").into_bytes(),
+    };
+    ssh.execute_command_with_input(command, &input, timeout)
 }
 
 #[cfg(test)]
@@ -89,7 +264,63 @@ mod command_tests {
     fn quotes_shell_metacharacters_as_data() {
         let input = "'; touch /tmp/db-pwned; # $(id) `id`\nnext";
         assert_eq!(shell_quote(input), "''\\''; touch /tmp/db-pwned; # $(id) `id`\nnext'");
-        assert_eq!(shell_words("GET key;id"), "'GET' 'key;id'");
+        assert_eq!(shell_words("GET key;id").unwrap(), "'GET' 'key;id'");
+    }
+
+    #[test]
+    fn preserves_redis_quoted_and_escaped_arguments() {
+        assert_eq!(
+            shell_words(r#"SET key "hello world""#).unwrap(),
+            "'SET' 'key' 'hello world'"
+        );
+        assert_eq!(
+            shell_words(r#"SET empty "" escaped\ value"#).unwrap(),
+            "'SET' 'empty' '' 'escaped value'"
+        );
+        assert!(shell_words(r#"SET key "unterminated"#).is_err());
+    }
+
+    #[test]
+    fn treats_timeouts_and_missing_exit_status_as_failures() {
+        let timeout = TerminalOutput::timeout("SELECT 1", Duration::from_secs(1));
+        assert!(terminal_output_error(&timeout, "数据库命令").is_some());
+
+        let missing_status = TerminalOutput::new("SELECT 1", "", None);
+        assert!(terminal_output_error(&missing_status, "数据库命令").is_some());
+    }
+
+    #[test]
+    fn recognizes_redis_and_mongodb_error_formats() {
+        assert!(database_output_error("redis", "(error) WRONGPASS invalid password").is_some());
+        assert!(database_output_error("mongodb", "MongoServerError: Authentication failed").is_some());
+        assert!(database_output_error("redis", "PONG").is_none());
+    }
+
+    #[test]
+    fn quotes_sql_values_and_mysql_identifiers() {
+        assert_eq!(sql_string_literal("db' OR 1=1 --"), "'db'' OR 1=1 --'");
+        assert_eq!(mysql_identifier("table`name"), "`table``name`");
+    }
+
+    #[test]
+    fn builds_password_wrapper_without_embedding_the_secret() {
+        let command = command_with_password_env("mysql --execute='SELECT 1'", "MYSQL_PWD");
+        assert!(command.contains("export MYSQL_PWD=\"$DB_PASSWORD\""));
+        assert!(command.ends_with("mysql --execute='SELECT 1'"));
+        assert!(!command.contains("s3cr3t"));
+    }
+
+    #[test]
+    fn distinguishes_active_from_inactive_service_units() {
+        assert!(service_is_active("inactive\nactive\n"));
+        assert!(!service_is_active("inactive\nfailed\n"));
+        assert!(!service_is_active("activating\n"));
+    }
+
+    #[test]
+    fn mysql_connection_without_default_database_can_run_a_health_check() {
+        assert!(mysql_database_option("").is_empty());
+        assert_eq!(mysql_database_option("data'prod"), "--database='data'\\''prod'");
     }
 }
 
@@ -99,16 +330,16 @@ mod command_tests {
 pub fn detect_databases(ssh: &SSHManagerRussh) -> Result<Vec<DatabaseInfo>, String> {
     let commands: Vec<String> = vec![
         // MySQL / MariaDB
-        "systemctl is-active mysql mysqld mariadb 2>/dev/null | head -1".to_string(),
+        "systemctl is-active mysql mysqld mariadb 2>/dev/null".to_string(),
         "mysql --version 2>/dev/null || echo '__NOT_INSTALLED__'".to_string(),
         // PostgreSQL
         "systemctl is-active postgresql 2>/dev/null | head -1".to_string(),
         "psql --version 2>/dev/null || echo '__NOT_INSTALLED__'".to_string(),
         // Redis
-        "systemctl is-active redis redis-server 2>/dev/null | head -1".to_string(),
+        "systemctl is-active redis redis-server 2>/dev/null".to_string(),
         "redis-server --version 2>/dev/null || echo '__NOT_INSTALLED__'".to_string(),
         // MongoDB
-        "systemctl is-active mongod mongodb 2>/dev/null | head -1".to_string(),
+        "systemctl is-active mongod mongodb 2>/dev/null".to_string(),
         "mongod --version 2>/dev/null | head -1 || echo '__NOT_INSTALLED__'".to_string(),
         // DM (达梦)
         "systemctl is-active DmServiceDMSERVER 2>/dev/null | head -1".to_string(),
@@ -125,7 +356,9 @@ pub fn detect_databases(ssh: &SSHManagerRussh) -> Result<Vec<DatabaseInfo>, Stri
     // Helper: extract output text from a batch result
     let get_output = |idx: usize| -> String {
         match results.get(idx) {
-            Some(Ok(out)) => out.output.trim().to_string(),
+            Some(Ok(out)) if !out.timed_out && out.exit_code.is_some() => {
+                out.output.trim().to_string()
+            }
             _ => String::new(),
         }
     };
@@ -134,7 +367,7 @@ pub fn detect_databases(ssh: &SSHManagerRussh) -> Result<Vec<DatabaseInfo>, Stri
     let mysql_status = get_output(0);
     let mysql_version = get_output(1);
     if !mysql_version.contains("__NOT_INSTALLED__") && !mysql_version.is_empty() {
-        let status = if mysql_status.contains("active") { "running" } else { "stopped" };
+        let status = if service_is_active(&mysql_status) { "running" } else { "stopped" };
         let name = if mysql_version.to_lowercase().contains("mariadb") { "MariaDB" } else { "MySQL" };
         databases.push(DatabaseInfo {
             db_type: "mysql".to_string(),
@@ -150,7 +383,7 @@ pub fn detect_databases(ssh: &SSHManagerRussh) -> Result<Vec<DatabaseInfo>, Stri
     let pg_status = get_output(2);
     let pg_version = get_output(3);
     if !pg_version.contains("__NOT_INSTALLED__") && !pg_version.is_empty() {
-        let status = if pg_status.contains("active") { "running" } else { "stopped" };
+        let status = if service_is_active(&pg_status) { "running" } else { "stopped" };
         databases.push(DatabaseInfo {
             db_type: "postgresql".to_string(),
             name: "PostgreSQL".to_string(),
@@ -165,7 +398,7 @@ pub fn detect_databases(ssh: &SSHManagerRussh) -> Result<Vec<DatabaseInfo>, Stri
     let redis_status = get_output(4);
     let redis_version = get_output(5);
     if !redis_version.contains("__NOT_INSTALLED__") && !redis_version.is_empty() {
-        let status = if redis_status.contains("active") { "running" } else { "stopped" };
+        let status = if service_is_active(&redis_status) { "running" } else { "stopped" };
         databases.push(DatabaseInfo {
             db_type: "redis".to_string(),
             name: "Redis".to_string(),
@@ -180,7 +413,7 @@ pub fn detect_databases(ssh: &SSHManagerRussh) -> Result<Vec<DatabaseInfo>, Stri
     let mongo_status = get_output(6);
     let mongo_version = get_output(7);
     if !mongo_version.contains("__NOT_INSTALLED__") && !mongo_version.is_empty() {
-        let status = if mongo_status.contains("active") { "running" } else { "stopped" };
+        let status = if service_is_active(&mongo_status) { "running" } else { "stopped" };
         databases.push(DatabaseInfo {
             db_type: "mongodb".to_string(),
             name: "MongoDB".to_string(),
@@ -195,7 +428,7 @@ pub fn detect_databases(ssh: &SSHManagerRussh) -> Result<Vec<DatabaseInfo>, Stri
     let dm_status = get_output(8);
     let dm_version = get_output(9);
     if !dm_version.contains("__NOT_INSTALLED__") && !dm_version.is_empty() {
-        let status = if dm_status.contains("active") { "running" } else { "stopped" };
+        let status = if service_is_active(&dm_status) { "running" } else { "stopped" };
         databases.push(DatabaseInfo {
             db_type: "dm".to_string(),
             name: "DM (达梦)".to_string(),
@@ -210,7 +443,7 @@ pub fn detect_databases(ssh: &SSHManagerRussh) -> Result<Vec<DatabaseInfo>, Stri
     let kb_status = get_output(10);
     let kb_version = get_output(11);
     if !kb_version.contains("__NOT_INSTALLED__") && !kb_version.is_empty() {
-        let status = if kb_status.contains("active") { "running" } else { "stopped" };
+        let status = if service_is_active(&kb_status) { "running" } else { "stopped" };
         databases.push(DatabaseInfo {
             db_type: "kingbase".to_string(),
             name: "KingBase".to_string(),
@@ -234,82 +467,78 @@ pub fn execute_sql(
     sql: &str,
 ) -> Result<SqlResult, String> {
     let start = std::time::Instant::now();
-    let pass = shell_quote(&conn.password);
     let user = shell_quote(&conn.username);
     let host = shell_quote(&conn.host);
     let statement = shell_quote(sql);
     let db = conn.database.as_deref().unwrap_or("");
-    let database = shell_quote(db);
 
-    let cmd = match db_type {
+    let (cmd, password_env) = match db_type {
         "mysql" => {
-            format!(
-                "mysql --user={user} --password={pass} --host={host} --port={port} --database={db} --execute={sql} --batch --raw 2>&1",
+            let database_option = mysql_database_option(db);
+            (format!(
+                "mysql --user={user} --host={host} --port={port} {database_option} --execute={sql} --batch --raw 2>&1",
                 user = user,
-                pass = pass,
                 host = host,
                 port = conn.port,
-                db = database,
                 sql = statement,
-            )
+            ), Some("MYSQL_PWD"))
         }
         "postgresql" => {
-            format!(
-                "PGPASSWORD={pass} psql -U {user} -h {host} -p {port} -d {db} -t -A -F'|' -c {sql} 2>&1",
-                pass = pass,
+            (format!(
+                "psql -U {user} -h {host} -p {port} -d {db} -t -A -F'|' -c {sql} 2>&1",
                 user = user,
                 host = host,
                 port = conn.port,
                 db = shell_quote(if db.is_empty() { "postgres" } else { db }),
                 sql = statement,
-            )
+            ), Some("PGPASSWORD"))
         }
         "redis" => {
-            // For Redis, the sql field is the raw command (e.g. "GET key")
-            let auth = if conn.password.is_empty() {
-                String::new()
-            } else {
-                format!("--pass {}", pass)
-            };
-            format!(
-                "redis-cli -h {host} -p {port} {auth} {cmd} 2>&1",
+            (format!(
+                "redis-cli -h {host} -p {port} {cmd} 2>&1",
                 host = host,
                 port = conn.port,
-                auth = auth,
-                cmd = shell_words(sql),
-            )
+                cmd = shell_words(sql)?,
+            ), Some("REDISCLI_AUTH"))
         }
         "mongodb" => {
             let auth = if conn.username.is_empty() {
                 String::new()
             } else {
-                format!("-u {user} -p {pass} --authenticationDatabase admin", user = user, pass = pass)
+                format!("-u {user} --authenticationDatabase admin", user = user)
             };
-            format!(
+            (format!(
                 "mongosh --host {host} --port {port} {auth} {db} --eval {js} --quiet 2>&1",
                 host = host,
                 port = conn.port,
                 auth = auth,
                 db = shell_quote(if db.is_empty() { "admin" } else { db }),
                 js = statement,
-            )
+            ), None)
         }
         _ => return Err(format!("不支持的数据库类型: {}", db_type)),
     };
 
-    let output = ssh.execute_command(&cmd)?;
+    let output = execute_with_password(
+        ssh,
+        &cmd,
+        &conn.password,
+        password_env,
+        Duration::from_secs(60),
+    )?;
     let elapsed = start.elapsed().as_millis() as u64;
     let raw = output.output.trim().to_string();
 
-    // Check for error indicators
-    if raw.starts_with("ERROR") || raw.contains("error:") || raw.contains("FATAL:") {
+    if let Some(error) = terminal_output_error(&output, "数据库命令")
+        .or_else(|| database_output_error(db_type, &raw))
+    {
         return Ok(SqlResult {
             columns: vec![],
             rows: vec![],
             row_count: 0,
             affected_rows: None,
             execution_time_ms: elapsed,
-            error: Some(raw),
+            error: Some(error),
         });
     }
 
@@ -466,8 +695,8 @@ pub fn list_tables(
     match db_type {
         "mysql" => {
             let sql = format!(
-                "SELECT TABLE_NAME, TABLE_ROWS, CONCAT(ROUND(DATA_LENGTH/1024,2),' KB'), ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA='{}'",
-                database.replace('\'', "\\'")
+                "SELECT TABLE_NAME, TABLE_ROWS, CONCAT(ROUND(DATA_LENGTH/1024,2),' KB'), ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA={}",
+                sql_string_literal(database)
             );
             let result = execute_sql(ssh, db_type, conn, &sql)?;
             if let Some(ref err) = result.error {
@@ -546,7 +775,11 @@ pub fn list_columns(
 ) -> Result<Vec<ColumnInfo>, String> {
     match db_type {
         "mysql" => {
-            let sql = format!("DESCRIBE {}.{}", database, table);
+            let sql = format!(
+                "DESCRIBE {}.{}",
+                mysql_identifier(database),
+                mysql_identifier(table),
+            );
             let result = execute_sql(ssh, db_type, conn, &sql)?;
             if let Some(ref err) = result.error {
                 return Err(err.clone());
@@ -574,8 +807,8 @@ pub fn list_columns(
                  FROM information_schema.columns c \
                  LEFT JOIN information_schema.key_column_usage kcu ON c.column_name = kcu.column_name AND c.table_name = kcu.table_name \
                  LEFT JOIN information_schema.table_constraints tc ON kcu.constraint_name = tc.constraint_name AND tc.constraint_type = 'PRIMARY KEY' \
-                 WHERE c.table_name='{}'",
-                table.replace('\'', "\\'")
+                 WHERE c.table_name={}",
+                sql_string_literal(table)
             );
             let result = execute_sql(ssh, "postgresql", &pg_conn, &sql)?;
             if let Some(ref err) = result.error {
@@ -728,22 +961,39 @@ pub fn service_control(
     let output = ssh.execute_command(&cmd)?;
     let result = output.output.trim().to_string();
 
-    // For status action, also check with is-active
+    // systemctl status exits nonzero for stopped units; use is-active to report that state.
     if action == "status" {
+        if output.timed_out || output.exit_code.is_none() {
+            return Err(terminal_output_error(&output, "数据库服务状态")
+                .unwrap_or_else(|| "查询数据库服务状态失败".to_string()));
+        }
         let status_cmd = match db_type {
-            "mysql" => "systemctl is-active mysql mysqld mariadb 2>/dev/null | head -1",
+            "mysql" => "systemctl is-active mysql mysqld mariadb 2>/dev/null",
             "postgresql" => "systemctl is-active postgresql 2>/dev/null",
-            "redis" => "systemctl is-active redis redis-server 2>/dev/null | head -1",
-            "mongodb" => "systemctl is-active mongod mongodb 2>/dev/null | head -1",
+            "redis" => "systemctl is-active redis redis-server 2>/dev/null",
+            "mongodb" => "systemctl is-active mongod mongodb 2>/dev/null",
             "dm" => "systemctl is-active DmServiceDMSERVER 2>/dev/null",
             "kingbase" => "systemctl is-active kingbase 2>/dev/null",
             _ => "",
         };
         if !status_cmd.is_empty() {
             let status_output = ssh.execute_command(status_cmd)?;
+            if status_output.timed_out || status_output.exit_code.is_none() {
+                return Err(terminal_output_error(&status_output, "查询数据库服务状态")
+                    .unwrap_or_else(|| "查询数据库服务状态失败".to_string()));
+            }
             let active_status = status_output.output.trim().to_string();
-            return Ok(format!("{}\n状态: {}", result, active_status));
+            if active_status.is_empty() {
+                return Err(terminal_output_error(&status_output, "查询数据库服务状态")
+                    .unwrap_or_else(|| "数据库服务状态为空".to_string()));
+            }
+            let status = if service_is_active(&active_status) { "running" } else { "stopped" };
+            return Ok(format!("{}\n状态: {}", result, status));
         }
+    }
+
+    if let Some(error) = terminal_output_error(&output, "数据库服务操作") {
+        return Err(error);
     }
 
     if result.is_empty() {
@@ -762,7 +1012,6 @@ pub fn backup_database(
     conn: &DbConnection,
     database: &str,
 ) -> Result<String, String> {
-    let pass = shell_quote(&conn.password);
     let user = shell_quote(&conn.username);
     let host = shell_quote(&conn.host);
     let db = shell_quote(database);
@@ -770,71 +1019,78 @@ pub fn backup_database(
     let safe_name: String = database.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect();
     let backup_path = shell_quote(&format!("/tmp/backup_{}_{}.sql", safe_name, timestamp));
 
-    let cmd = match db_type {
+    let (cmd, password_env) = match db_type {
         "mysql" => {
-            format!(
-                "mysqldump --user={user} --password={pass} --host={host} --port={port} {db} > {path} 2>&1 && echo OK:{path}",
+            (format!(
+                "mysqldump --user={user} --host={host} --port={port} {db} > {path} 2>&1 && echo OK:{path}",
                 user = user,
-                pass = pass,
                 host = host,
                 port = conn.port,
                 db = db,
                 path = backup_path,
-            )
+            ), Some("MYSQL_PWD"))
         }
         "postgresql" => {
-            format!(
-                "PGPASSWORD={pass} pg_dump -U {user} -h {host} -p {port} {db} > {path} 2>&1 && echo OK:{path}",
-                pass = pass,
+            (format!(
+                "pg_dump -U {user} -h {host} -p {port} {db} > {path} 2>&1 && echo OK:{path}",
                 user = user,
                 host = host,
                 port = conn.port,
                 db = db,
                 path = backup_path,
-            )
+            ), Some("PGPASSWORD"))
         }
         "redis" => {
-            let auth = if conn.password.is_empty() {
-                String::new()
-            } else {
-                format!("--pass {}", pass)
-            };
-            format!(
-                "redis-cli -h {host} -p {port} {auth} BGSAVE 2>&1",
+            (format!(
+                "redis-cli -h {host} -p {port} BGSAVE 2>&1",
                 host = host,
                 port = conn.port,
-                auth = auth,
-            )
+            ), Some("REDISCLI_AUTH"))
         }
         "mongodb" => {
             let auth = if conn.username.is_empty() {
                 String::new()
             } else {
-                format!("-u {user} -p {pass} --authenticationDatabase admin", user = user, pass = pass)
+                format!("-u {user} --authenticationDatabase admin", user = user)
             };
-            format!(
+            (format!(
                 "mongodump --host {host} --port {port} {auth} --db {db} --out /tmp/backup_{ts}/ 2>&1 && echo 'OK:/tmp/backup_{ts}/'",
                 host = host,
                 port = conn.port,
                 auth = auth,
                 db = db,
                 ts = timestamp,
-            )
+            ), None)
         }
         _ => return Err(format!("不支持的数据库类型: {}", db_type)),
     };
 
-    let output = ssh.execute_command(&cmd)?;
+    let output = execute_with_password(
+        ssh,
+        &cmd,
+        &conn.password,
+        password_env,
+        Duration::from_secs(600),
+    )?;
     let raw = output.output.trim().to_string();
+
+    if let Some(error) = terminal_output_error(&output, "数据库备份") {
+        return Err(format!("备份失败: {error}"));
+    }
 
     if raw.contains("OK:") {
         Ok(raw)
     } else if raw.contains("Background saving started") {
         Ok(format!("Redis BGSAVE 已启动: {}", raw))
-    } else if raw.contains("error") || raw.contains("ERROR") || raw.contains("FATAL") {
-        Err(format!("备份失败: {}", raw))
     } else {
-        Ok(raw)
+        Err(format!(
+            "备份失败: {}",
+            if raw.is_empty() {
+                "命令未返回可确认的成功结果"
+            } else {
+                raw.as_str()
+            }
+        ))
     }
 }
 
@@ -850,22 +1106,31 @@ pub fn get_db_stats(
         "mysql" => {
             let commands = vec![
                 format!(
-                    "mysql --user={user} --password={pass} --host={host} -P{port} -e \"SHOW GLOBAL STATUS WHERE Variable_name IN ('Uptime','Threads_connected','Threads_running','Slow_queries','Connections')\" --batch --raw 2>&1",
+                    "mysql --user={user} --host={host} -P{port} -e \"SHOW GLOBAL STATUS WHERE Variable_name IN ('Uptime','Threads_connected','Threads_running','Slow_queries','Connections')\" --batch --raw 2>&1",
                     user = shell_quote(&conn.username),
-                    pass = shell_quote(&conn.password),
                     host = shell_quote(&conn.host),
                     port = conn.port,
                 ),
                 format!(
-                    "mysql --user={user} --password={pass} --host={host} -P{port} -e \"SELECT ROUND(SUM(data_length + index_length) / 1024 / 1024, 2) AS size_mb FROM information_schema.tables\" --batch --raw 2>&1",
+                    "mysql --user={user} --host={host} -P{port} -e \"SELECT ROUND(SUM(data_length + index_length) / 1024 / 1024, 2) AS size_mb FROM information_schema.tables\" --batch --raw 2>&1",
                     user = shell_quote(&conn.username),
-                    pass = shell_quote(&conn.password),
                     host = shell_quote(&conn.host),
                     port = conn.port,
                 ),
             ];
 
-            let results = ssh.execute_batch_commands(&commands)?;
+            let results = commands
+                .iter()
+                .map(|command| {
+                    execute_with_password(
+                        ssh,
+                        command,
+                        &conn.password,
+                        Some("MYSQL_PWD"),
+                        Duration::from_secs(60),
+                    )
+                })
+                .collect::<Vec<_>>();
 
             let mut extra = HashMap::new();
             let mut uptime = String::new();
@@ -917,28 +1182,38 @@ pub fn get_db_stats(
             })
         }
         "postgresql" => {
-            let escaped_pass = shell_quote(&conn.password);
             let db = shell_quote(conn.database.as_deref().unwrap_or("postgres"));
             let commands = vec![
                 format!(
-                    "PGPASSWORD={pass} psql -U {user} -h {host} -p {port} -d {db} -t -A -F'|' -c \"SELECT date_trunc('second', current_timestamp - pg_postmaster_start_time()) as uptime\" 2>&1",
-                    pass = escaped_pass, user = shell_quote(&conn.username), host = shell_quote(&conn.host), port = conn.port, db = db,
+                    "psql -U {user} -h {host} -p {port} -d {db} -t -A -F'|' -c \"SELECT date_trunc('second', current_timestamp - pg_postmaster_start_time()) as uptime\" 2>&1",
+                    user = shell_quote(&conn.username), host = shell_quote(&conn.host), port = conn.port, db = db,
                 ),
                 format!(
-                    "PGPASSWORD={pass} psql -U {user} -h {host} -p {port} -d {db} -t -A -F'|' -c \"SELECT count(*) FROM pg_stat_activity\" 2>&1",
-                    pass = escaped_pass, user = shell_quote(&conn.username), host = shell_quote(&conn.host), port = conn.port, db = db,
+                    "psql -U {user} -h {host} -p {port} -d {db} -t -A -F'|' -c \"SELECT count(*) FROM pg_stat_activity\" 2>&1",
+                    user = shell_quote(&conn.username), host = shell_quote(&conn.host), port = conn.port, db = db,
                 ),
                 format!(
-                    "PGPASSWORD={pass} psql -U {user} -h {host} -p {port} -d {db} -t -A -F'|' -c \"SELECT count(*) FROM pg_stat_activity WHERE state='active'\" 2>&1",
-                    pass = escaped_pass, user = shell_quote(&conn.username), host = shell_quote(&conn.host), port = conn.port, db = db,
+                    "psql -U {user} -h {host} -p {port} -d {db} -t -A -F'|' -c \"SELECT count(*) FROM pg_stat_activity WHERE state='active'\" 2>&1",
+                    user = shell_quote(&conn.username), host = shell_quote(&conn.host), port = conn.port, db = db,
                 ),
                 format!(
-                    "PGPASSWORD={pass} psql -U {user} -h {host} -p {port} -d {db} -t -A -F'|' -c \"SELECT pg_size_pretty(sum(pg_database_size(datname))) FROM pg_database\" 2>&1",
-                    pass = escaped_pass, user = shell_quote(&conn.username), host = shell_quote(&conn.host), port = conn.port, db = db,
+                    "psql -U {user} -h {host} -p {port} -d {db} -t -A -F'|' -c \"SELECT pg_size_pretty(sum(pg_database_size(datname))) FROM pg_database\" 2>&1",
+                    user = shell_quote(&conn.username), host = shell_quote(&conn.host), port = conn.port, db = db,
                 ),
             ];
 
-            let results = ssh.execute_batch_commands(&commands)?;
+            let results = commands
+                .iter()
+                .map(|command| {
+                    execute_with_password(
+                        ssh,
+                        command,
+                        &conn.password,
+                        Some("PGPASSWORD"),
+                        Duration::from_secs(60),
+                    )
+                })
+                .collect::<Vec<_>>();
 
             let get = |idx: usize| -> String {
                 match results.get(idx) {

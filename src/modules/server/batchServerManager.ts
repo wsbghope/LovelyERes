@@ -5,6 +5,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { SSHConfigManager, type SSHConnection } from '../ssh/connectionManager';
+import { invokeWithHostKeyConfirmation } from '../ssh/hostKeyVerification';
 import { eventBus } from '../core/eventBus';
 
 // ========== 类型 ==========
@@ -194,7 +195,7 @@ export class BatchServerManager {
       }
 
       // 使用独立连接：connect_direct
-      await invoke('ssh_connect_direct', {
+      await invokeWithHostKeyConfirmation('ssh_connect_direct', {
         host: conn.host,
         port: conn.port,
         username: conn.username,

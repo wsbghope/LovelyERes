@@ -5,6 +5,8 @@
 
 import { invoke } from '@tauri-apps/api/core';
 
+import { invokeWithHostKeyConfirmation } from './hostKeyVerification';
+
 /**
  * SSH账号凭证
  */
@@ -316,7 +318,7 @@ export class SSHConfigManager {
       }
 
       // 调用后端SSH连接命令 (russh)
-      const result = await invoke('ssh_connect_direct', {
+      const result = await invokeWithHostKeyConfirmation('ssh_connect_direct', {
         host: connection.host,
         port: connection.port,
         username: connection.username,
@@ -391,7 +393,7 @@ export class SSHConfigManager {
         password = (connection as any).password;
       }
 
-      await invoke('ssh_test_connection', {
+      await invokeWithHostKeyConfirmation('ssh_test_connection', {
         host: connection.host,
         port: connection.port,
         username: connection.username,

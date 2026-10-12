@@ -464,19 +464,42 @@ export class UploadModal {
       for (const file of this.selectedFiles) {
         // 构建远程文件路径
         const remotePath = `${this.currentTargetDir}/${file.name}`;
+        let uploadId: string | null = null;
         
         try {
-          const data = Array.from(new Uint8Array(await file.arrayBuffer()));
-          await (window as any).__TAURI__.core.invoke('sftp_upload_bytes', {
+          uploadId = await (window as any).__TAURI__.core.invoke('sftp_upload_begin', {
             fileName: file.name,
-            data,
-            remotePath
+            totalSize: file.size,
+          }) as string;
+
+          const chunkSize = 256 * 1024;
+          for (let offset = 0; offset < file.size; offset += chunkSize) {
+            const data = Array.from(new Uint8Array(
+              await file.slice(offset, Math.min(offset + chunkSize, file.size)).arrayBuffer(),
+            ));
+            await (window as any).__TAURI__.core.invoke('sftp_upload_chunk', {
+              uploadId,
+              data,
+            });
+            const fileProgress = Math.min(offset + chunkSize, file.size) / Math.max(file.size, 1);
+            this.updateProgress(((completedFiles + fileProgress) / totalFiles) * 100);
+          }
+
+          await (window as any).__TAURI__.core.invoke('sftp_upload_finish', {
+            uploadId,
+            remotePath,
           });
+          uploadId = null;
 
           completedFiles++;
           this.updateProgress((completedFiles / totalFiles) * 100);
           
         } catch (error) {
+          if (uploadId) {
+            await (window as any).__TAURI__.core.invoke('sftp_upload_cancel', {
+              uploadId,
+            }).catch(() => {});
+          }
           console.error(`上传文件失败: ${file.name}`, error);
           window.showNotification && window.showNotification(`上传文件失败: ${file.name} - ${error}`, 'error');
         }

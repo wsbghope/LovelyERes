@@ -1318,26 +1318,26 @@ nohup java -jar /opt/myapp/app.jar > /opt/myapp/app.log 2>&1 &</code>
       if (!id) continue;
       // 检测容器内是否有 Java
       const javaCheck = await this.execSSH(
-        `docker exec ${id} sh -c 'which java 2>/dev/null || ls /usr/bin/java 2>/dev/null || ls /opt/java*/bin/java 2>/dev/null' 2>/dev/null | head -1`
+        `docker exec ${shellQuote(id)} sh -c 'which java 2>/dev/null || ls /usr/bin/java 2>/dev/null || ls /opt/java*/bin/java 2>/dev/null' 2>/dev/null | head -1`
       );
       const hasJava = javaCheck.trim().length > 0;
       // 检测容器内是否有运行的 Java 进程
       const javaProc = await this.execSSH(
-        `docker exec ${id} sh -c 'ps aux 2>/dev/null | grep "[j]ava" | head -1' 2>/dev/null`
+        `docker exec ${shellQuote(id)} sh -c 'ps aux 2>/dev/null | grep "[j]ava" | head -1' 2>/dev/null`
       );
       if (hasJava || javaProc.trim()) {
         // 扫描 JAR 文件
         const jarScan = await this.execSSH(
-          `docker exec ${id} sh -c 'find / -maxdepth 4 -name "*.jar" -type f 2>/dev/null | grep -v "/proc/" | head -10' 2>/dev/null`
+          `docker exec ${shellQuote(id)} sh -c 'find / -maxdepth 4 -name "*.jar" -type f 2>/dev/null | grep -v "/proc/" | head -10' 2>/dev/null`
         );
         const jars = jarScan.split('\n').filter(Boolean);
         // Java 版本
         const jv = await this.execSSH(
-          `docker exec ${id} sh -c 'java -version 2>&1 | head -1' 2>/dev/null`
+          `docker exec ${shellQuote(id)} sh -c 'java -version 2>&1 | head -1' 2>/dev/null`
         );
         // PID
         const pidStr = await this.execSSH(
-          `docker exec ${id} sh -c 'pgrep -f java | head -1' 2>/dev/null`
+          `docker exec ${shellQuote(id)} sh -c 'pgrep -f java | head -1' 2>/dev/null`
         );
         this.dockerContainers.push({
           id: id.substring(0, 12),

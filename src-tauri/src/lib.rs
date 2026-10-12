@@ -168,6 +168,10 @@ pub fn run() {
             commands::sftp_commands::sftp_chmod,
             commands::sftp_commands::sftp_get_file_details,
             commands::sftp_commands::sftp_upload_bytes,
+            commands::sftp_commands::sftp_upload_begin,
+            commands::sftp_commands::sftp_upload_chunk,
+            commands::sftp_commands::sftp_upload_finish,
+            commands::sftp_commands::sftp_upload_cancel,
             // File analysis (still in its own module)
             file_analysis::sftp_file_analysis,
             file_analysis::sftp_file_analysis_independent,

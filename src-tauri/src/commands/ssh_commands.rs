@@ -73,6 +73,7 @@ pub async fn ssh_connect_direct(
     auth_type: Option<String>,
     key_path: Option<String>,
     key_passphrase: Option<String>,
+    expected_fingerprint: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
     #[cfg(debug_assertions)]
@@ -93,14 +94,28 @@ pub async fn ssh_connect_direct(
             if let Some(kp) = &key_path {
                 let key_content = std::fs::read_to_string(kp)
                     .map_err(|e| format!("读取密钥文件失败: {}", e))?;
-                manager.connect(&host, port, &username, key_passphrase.as_deref(), Some(&key_content))
+                manager.connect_with_fingerprint(
+                    &host,
+                    port,
+                    &username,
+                    key_passphrase.as_deref(),
+                    Some(&key_content),
+                    expected_fingerprint.as_deref(),
+                )
             } else {
                 Err("密钥认证需要提供密钥路径".to_string())
             }
         }
         _ => {
             // 密码认证
-            manager.connect(&host, port, &username, password.as_deref(), None)
+            manager.connect_with_fingerprint(
+                &host,
+                port,
+                &username,
+                password.as_deref(),
+                None,
+                expected_fingerprint.as_deref(),
+            )
         }
     };
 
@@ -123,6 +138,7 @@ pub async fn ssh_test_connection(
     key_path: Option<String>,
     key_passphrase: Option<String>,
     _certificate_path: Option<String>,
+    expected_fingerprint: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<bool, String> {
     println!("🔍 [ssh_test_connection] 开始测试连接: {}@{}:{}", username, host, port);
@@ -135,13 +151,27 @@ pub async fn ssh_test_connection(
             if let Some(kp) = &key_path {
                 let key_content = std::fs::read_to_string(kp)
                     .map_err(|e| format!("读取密钥文件失败: {}", e))?;
-                manager.connect(&host, port, &username, key_passphrase.as_deref(), Some(&key_content))
+                manager.connect_with_fingerprint(
+                    &host,
+                    port,
+                    &username,
+                    key_passphrase.as_deref(),
+                    Some(&key_content),
+                    expected_fingerprint.as_deref(),
+                )
             } else {
                 Err("密钥认证需要提供密钥路径".to_string())
             }
         }
         _ => {
-            manager.connect(&host, port, &username, password.as_deref(), None)
+            manager.connect_with_fingerprint(
+                &host,
+                port,
+                &username,
+                password.as_deref(),
+                None,
+                expected_fingerprint.as_deref(),
+            )
         }
     };
 

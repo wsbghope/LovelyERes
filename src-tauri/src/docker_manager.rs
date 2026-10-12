@@ -874,7 +874,7 @@ fn ensure_success(
 }
 
 fn is_success(result: &TerminalOutput) -> bool {
-    result.exit_code.unwrap_or(0) == 0
+    !result.timed_out && result.exit_code == Some(0)
 }
 
 fn normalize_string(value: Option<&str>) -> Option<String> {
@@ -941,4 +941,17 @@ fn derive_parent_path(path: &str) -> Option<String> {
 
 fn generate_temp_path() -> String {
     format!("/tmp/lovelyres_{}.tmp", Uuid::new_v4())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn timeout_and_missing_exit_status_are_not_successful() {
+        let timeout = TerminalOutput::timeout("docker ps", std::time::Duration::from_secs(1));
+        assert!(!is_success(&timeout));
+        assert!(!is_success(&TerminalOutput::new("docker ps", "", None)));
+        assert!(is_success(&TerminalOutput::new("docker ps", "", Some(0))));
+    }
 }

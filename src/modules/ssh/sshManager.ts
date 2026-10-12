@@ -5,6 +5,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { SSHConfigManager, type SSHConnection } from './connectionManager';
+import { invokeWithHostKeyConfirmation } from './hostKeyVerification';
 import { SystemInfoManager, type SystemInfo } from '../system/systemInfoManager';
 
 export interface SSHCommand {
@@ -77,7 +78,7 @@ export class SSHManager {
       console.log(`🔗 正在连接到 ${connection.name} (${connection.host}:${connection.port})`);
 
       // 调用后端建立SSH连接 (russh)
-      await invoke('ssh_connect_direct', {
+      await invokeWithHostKeyConfirmation('ssh_connect_direct', {
         host: connection.host,
         port: connection.port,
         username: connection.username,

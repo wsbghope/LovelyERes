@@ -13,6 +13,9 @@ use russh_sftp::client::SftpSession;
 use russh_sftp::protocol::FileAttributes;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+const SFTP_TRANSFER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
+const SFTP_RESPONSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(605);
+
 // ================== Types ==================
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -174,6 +177,13 @@ enum WorkerCommand {
         timeout: std::time::Duration,
         response_tx: mpsc::Sender<Result<TerminalOutput, String>>,
     },
+    ExecuteCommandWithInput {
+        session_id: String,
+        command: String,
+        input: Vec<u8>,
+        timeout: std::time::Duration,
+        response_tx: mpsc::Sender<Result<TerminalOutput, String>>,
+    },
     ListSftpFiles {
         session_id: String,
         path: String,
@@ -182,6 +192,7 @@ enum WorkerCommand {
     ReadSftpFile {
         session_id: String,
         path: String,
+        max_bytes: Option<usize>,
         response_tx: mpsc::Sender<Result<Vec<u8>, String>>,
     },
     WriteSftpFile {
@@ -204,6 +215,18 @@ enum WorkerCommand {
         session_id: String,
         old_path: String,
         new_path: String,
+        response_tx: mpsc::Sender<Result<(), String>>,
+    },
+    UploadLocalFile {
+        session_id: String,
+        local_path: String,
+        remote_path: String,
+        response_tx: mpsc::Sender<Result<(), String>>,
+    },
+    DownloadRemoteFile {
+        session_id: String,
+        remote_path: String,
+        local_path: String,
         response_tx: mpsc::Sender<Result<(), String>>,
     },
     DeployOfflineTool {
@@ -464,6 +487,54 @@ async fn execute_command_async(
     Ok(TerminalOutput::new(command, &output, exit_code))
 }
 
+async fn execute_command_with_input_async(
+    handle: &Handle<ClientHandler>,
+    command: &str,
+    input: &[u8],
+) -> Result<TerminalOutput, String> {
+    let channel = handle
+        .channel_open_session()
+        .await
+        .map_err(|e| format!("Failed to open channel: {}", e))?;
+    channel
+        .exec(true, command)
+        .await
+        .map_err(|e| format!("Failed to execute command: {}", e))?;
+    if !input.is_empty() {
+        channel
+            .data(std::io::Cursor::new(input))
+            .await
+            .map_err(|e| format!("Failed to send command input: {}", e))?;
+    }
+    channel
+        .eof()
+        .await
+        .map_err(|e| format!("Failed to close command input: {}", e))?;
+
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let mut exit_code: Option<i32> = None;
+    let mut channel = channel;
+    loop {
+        match channel.wait().await {
+            Some(ChannelMsg::Data { data }) => stdout.extend_from_slice(&data),
+            Some(ChannelMsg::ExtendedData { data, ext: 1 }) => stderr.extend_from_slice(&data),
+            Some(ChannelMsg::ExitStatus { exit_status }) => exit_code = Some(exit_status as i32),
+            Some(ChannelMsg::Eof) | None => break,
+            _ => {}
+        }
+    }
+
+    let mut output = String::from_utf8_lossy(&stdout).to_string();
+    if !stderr.is_empty() {
+        if !output.is_empty() && !output.ends_with('\n') {
+            output.push('\n');
+        }
+        output.push_str(&String::from_utf8_lossy(&stderr));
+    }
+    Ok(TerminalOutput::new(command, &output, exit_code))
+}
+
 async fn list_sftp_files_async(
     handle: &Handle<ClientHandler>,
     path: &str,
@@ -558,6 +629,7 @@ async fn list_sftp_files_async(
 async fn read_sftp_file_async(
     handle: &Handle<ClientHandler>,
     path: &str,
+    max_bytes: Option<usize>,
 ) -> Result<Vec<u8>, String> {
     let channel = handle
         .channel_open_session()
@@ -579,9 +651,24 @@ async fn read_sftp_file_async(
         .map_err(|e| format!("Failed to open file: {}", e))?;
     
     let mut content = Vec::new();
-    file.read_to_end(&mut content)
-        .await
-        .map_err(|e| format!("Failed to read file: {}", e))?;
+    let mut buffer = vec![0u8; 64 * 1024];
+    loop {
+        let remaining = max_bytes
+            .map(|limit| limit.saturating_sub(content.len()))
+            .unwrap_or(buffer.len());
+        if remaining == 0 {
+            break;
+        }
+        let read_len = remaining.min(buffer.len());
+        let count = file
+            .read(&mut buffer[..read_len])
+            .await
+            .map_err(|e| format!("Failed to read file: {}", e))?;
+        if count == 0 {
+            break;
+        }
+        content.extend_from_slice(&buffer[..count]);
+    }
     
     Ok(content)
 }
@@ -614,6 +701,246 @@ async fn write_sftp_file_async(
         .await
         .map_err(|e| format!("Failed to write file: {}", e))?;
     
+    Ok(())
+}
+
+async fn upload_local_file_async(
+    handle: &Handle<ClientHandler>,
+    local_path: &str,
+    remote_path: &str,
+) -> Result<(), String> {
+    let mut local_file = tokio::fs::File::open(local_path)
+        .await
+        .map_err(|e| format!("Failed to open local file: {}", e))?;
+    let channel = handle
+        .channel_open_session()
+        .await
+        .map_err(|e| format!("Failed to open channel: {}", e))?;
+    channel
+        .request_subsystem(true, "sftp")
+        .await
+        .map_err(|e| format!("Failed to request SFTP subsystem: {}", e))?;
+    let sftp = SftpSession::new(channel.into_stream())
+        .await
+        .map_err(|e| format!("Failed to create SFTP session: {}", e))?;
+
+    let temp_path = format!("{remote_path}.upload-{}", uuid::Uuid::new_v4());
+    let upload_result = async {
+        let mut remote_file = sftp
+            .create(&temp_path)
+            .await
+            .map_err(|e| format!("Failed to create remote file: {}", e))?;
+        let mut buffer = vec![0u8; 64 * 1024];
+        loop {
+            let count = local_file
+                .read(&mut buffer)
+                .await
+                .map_err(|e| format!("Failed to read local file: {}", e))?;
+            if count == 0 {
+                break;
+            }
+            remote_file
+                .write_all(&buffer[..count])
+                .await
+                .map_err(|e| format!("Failed to write remote file: {}", e))?;
+        }
+        remote_file
+            .flush()
+            .await
+            .map_err(|e| format!("Failed to flush remote file: {}", e))?;
+        drop(remote_file);
+
+        let backup_path = format!("{remote_path}.backup-{}", uuid::Uuid::new_v4());
+        let had_existing_file = match sftp.symlink_metadata(remote_path).await {
+            Ok(attrs) => {
+                if attrs.is_symlink() || !attrs.is_regular() {
+                    return Err(format!(
+                        "Refusing to replace non-regular remote path: {remote_path}"
+                    ));
+                }
+                sftp.rename(remote_path, &backup_path)
+                    .await
+                    .map_err(|e| format!("Failed to preserve existing remote file: {}", e))?;
+                true
+            }
+            Err(_) => false,
+        };
+
+        if let Err(error) = sftp.rename(&temp_path, remote_path).await {
+            if had_existing_file {
+                let _ = sftp.rename(&backup_path, remote_path).await;
+            }
+            return Err(format!("Failed to finalize remote file: {}", error));
+        }
+        if had_existing_file {
+            if let Err(error) = sftp.remove_file(&backup_path).await {
+                eprintln!(
+                    "Failed to remove remote upload backup {}: {}",
+                    backup_path, error
+                );
+            }
+        }
+        Ok(())
+    }
+    .await;
+
+    if upload_result.is_err() {
+        let _ = sftp.remove_file(&temp_path).await;
+    }
+    upload_result
+}
+
+struct LocalTransferTemp {
+    path: std::path::PathBuf,
+}
+
+impl Drop for LocalTransferTemp {
+    fn drop(&mut self) {
+        // The guard also runs when a transfer future is cancelled by its deadline.
+        if let Err(error) = std::fs::remove_file(&self.path) {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                eprintln!("Failed to remove local transfer temp {}: {}", self.path.display(), error);
+            }
+        }
+    }
+}
+
+struct LocalTransferBackup {
+    path: std::path::PathBuf,
+    destination: std::path::PathBuf,
+    armed: bool,
+}
+
+impl Drop for LocalTransferBackup {
+    fn drop(&mut self) {
+        // A deadline can cancel the transfer between moving the old file aside
+        // and installing the new one. Restore the old file if the target is absent.
+        if self.armed && !self.destination.exists() {
+            if let Err(error) = std::fs::rename(&self.path, &self.destination) {
+                eprintln!(
+                    "Failed to restore local download backup {}: {}",
+                    self.path.display(),
+                    error
+                );
+            }
+        }
+    }
+}
+
+async fn download_remote_file_async(
+    handle: &Handle<ClientHandler>,
+    remote_path: &str,
+    local_path: &str,
+) -> Result<(), String> {
+    let channel = handle
+        .channel_open_session()
+        .await
+        .map_err(|e| format!("Failed to open channel: {}", e))?;
+    channel
+        .request_subsystem(true, "sftp")
+        .await
+        .map_err(|e| format!("Failed to request SFTP subsystem: {}", e))?;
+    let sftp = SftpSession::new(channel.into_stream())
+        .await
+        .map_err(|e| format!("Failed to create SFTP session: {}", e))?;
+    let mut remote_file = sftp
+        .open(remote_path)
+        .await
+        .map_err(|e| format!("Failed to open remote file: {}", e))?;
+    let destination = std::path::Path::new(local_path);
+    let file_name = destination
+        .file_name()
+        .ok_or_else(|| "Invalid local destination path".to_string())?
+        .to_string_lossy();
+    let temp_path = destination.with_file_name(format!(
+        ".{file_name}.download-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let _temp_cleanup = LocalTransferTemp {
+        path: temp_path.clone(),
+    };
+    let mut local_file = tokio::fs::File::create(&temp_path)
+        .await
+        .map_err(|e| format!("Failed to create local file: {}", e))?;
+
+    let download_result = async {
+        let mut buffer = vec![0u8; 64 * 1024];
+        loop {
+            let count = remote_file
+                .read(&mut buffer)
+                .await
+                .map_err(|e| format!("Failed to read remote file: {}", e))?;
+            if count == 0 {
+                break;
+            }
+            local_file
+                .write_all(&buffer[..count])
+                .await
+                .map_err(|e| format!("Failed to write local file: {}", e))?;
+        }
+        local_file
+            .flush()
+            .await
+            .map_err(|e| format!("Failed to flush local file: {}", e))?;
+        local_file
+            .sync_all()
+            .await
+            .map_err(|e| format!("Failed to sync local file: {}", e))
+    }
+    .await;
+    drop(local_file);
+
+    if let Err(error) = download_result {
+        return Err(error);
+    }
+
+    let backup_path = destination.with_file_name(format!(
+        ".{file_name}.backup-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let mut backup_cleanup = LocalTransferBackup {
+        path: backup_path.clone(),
+        destination: destination.to_path_buf(),
+        armed: false,
+    };
+    let had_existing_file = match tokio::fs::symlink_metadata(destination).await {
+        Ok(metadata) => {
+            if !metadata.file_type().is_file() {
+                return Err(format!(
+                    "Refusing to replace non-regular local path: {}",
+                    destination.display()
+                ));
+            }
+            // This short local rename must complete before the cancellation
+            // guard is armed; an awaited rename could finish after cancellation.
+            std::fs::rename(destination, &backup_path)
+                .map_err(|e| format!("Failed to preserve existing local file: {}", e))?;
+            backup_cleanup.armed = true;
+            true
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => {
+            return Err(format!("Failed to inspect local destination: {}", error));
+        }
+    };
+
+    if let Err(error) = tokio::fs::rename(&temp_path, destination).await {
+        if had_existing_file {
+            let _ = tokio::fs::rename(&backup_path, destination).await;
+        }
+        return Err(format!("Failed to finalize local file: {}", error));
+    }
+    if had_existing_file {
+        if let Err(error) = tokio::fs::remove_file(&backup_path).await {
+            eprintln!(
+                "Failed to remove local download backup {}: {}",
+                backup_path.display(),
+                error
+            );
+        } else {
+            backup_cleanup.armed = false;
+        }
+    }
     Ok(())
 }
 
@@ -929,6 +1256,25 @@ fn run_worker(rx: mpsc::Receiver<WorkerCommand>) {
                         let _ = response_tx.send(Err(format!("Session not found: {}", session_id)));
                     }
                 }
+
+                WorkerCommand::ExecuteCommandWithInput { session_id, command, input, timeout, response_tx } => {
+                    if let Some(session) = sessions.get(&session_id) {
+                        let handle = Arc::clone(&session.handle);
+                        tokio::spawn(async move {
+                            let start = std::time::Instant::now();
+                            let result = match tokio::time::timeout(
+                                timeout,
+                                execute_command_with_input_async(&handle, &command, &input),
+                            ).await {
+                                Ok(result) => result.map(|output| output.with_duration(start.elapsed())),
+                                Err(_) => Ok(TerminalOutput::timeout(&command, timeout)),
+                            };
+                            let _ = response_tx.send(result);
+                        });
+                    } else {
+                        let _ = response_tx.send(Err(format!("Session not found: {}", session_id)));
+                    }
+                }
                 
                 WorkerCommand::ListSftpFiles { session_id, path, response_tx } => {
                     if let Some(session) = sessions.get(&session_id) {
@@ -942,11 +1288,11 @@ fn run_worker(rx: mpsc::Receiver<WorkerCommand>) {
                     }
                 }
 
-                WorkerCommand::ReadSftpFile { session_id, path, response_tx } => {
+                WorkerCommand::ReadSftpFile { session_id, path, max_bytes, response_tx } => {
                     if let Some(session) = sessions.get(&session_id) {
                         let handle = Arc::clone(&session.handle);
                         tokio::spawn(async move {
-                            let result = read_sftp_file_async(&handle, &path).await;
+                            let result = read_sftp_file_async(&handle, &path, max_bytes).await;
                             let _ = response_tx.send(result);
                         });
                     } else {
@@ -995,6 +1341,48 @@ fn run_worker(rx: mpsc::Receiver<WorkerCommand>) {
                         let handle = Arc::clone(&session.handle);
                         tokio::spawn(async move {
                             let result = rename_sftp_file_async(&handle, &old_path, &new_path).await;
+                            let _ = response_tx.send(result);
+                        });
+                    } else {
+                        let _ = response_tx.send(Err(format!("Session not found: {}", session_id)));
+                    }
+                }
+
+                WorkerCommand::UploadLocalFile { session_id, local_path, remote_path, response_tx } => {
+                    if let Some(session) = sessions.get(&session_id) {
+                        let handle = Arc::clone(&session.handle);
+                        tokio::spawn(async move {
+                            let result = match tokio::time::timeout(
+                                SFTP_TRANSFER_TIMEOUT,
+                                upload_local_file_async(&handle, &local_path, &remote_path),
+                            ).await {
+                                Ok(result) => result,
+                                Err(_) => Err(format!(
+                                    "上传超时（{} 秒），传输已取消",
+                                    SFTP_TRANSFER_TIMEOUT.as_secs()
+                                )),
+                            };
+                            let _ = response_tx.send(result);
+                        });
+                    } else {
+                        let _ = response_tx.send(Err(format!("Session not found: {}", session_id)));
+                    }
+                }
+
+                WorkerCommand::DownloadRemoteFile { session_id, remote_path, local_path, response_tx } => {
+                    if let Some(session) = sessions.get(&session_id) {
+                        let handle = Arc::clone(&session.handle);
+                        tokio::spawn(async move {
+                            let result = match tokio::time::timeout(
+                                SFTP_TRANSFER_TIMEOUT,
+                                download_remote_file_async(&handle, &remote_path, &local_path),
+                            ).await {
+                                Ok(result) => result,
+                                Err(_) => Err(format!(
+                                    "下载超时（{} 秒），传输已取消",
+                                    SFTP_TRANSFER_TIMEOUT.as_secs()
+                                )),
+                            };
                             let _ = response_tx.send(result);
                         });
                     } else {
@@ -1523,6 +1911,29 @@ impl SSHManagerRussh {
         self.execute_command_on_session_with_timeout(&session_id, &final_command, timeout)
     }
 
+    pub fn execute_command_with_input(
+        &self,
+        command: &str,
+        input: &[u8],
+        timeout: std::time::Duration,
+    ) -> Result<TerminalOutput, String> {
+        let session_id = self.get_current_session()?;
+        let final_command = self.wrap_with_busybox(command);
+        let (response_tx, response_rx) = mpsc::channel();
+
+        self.send_to_worker(WorkerCommand::ExecuteCommandWithInput {
+            session_id,
+            command: final_command,
+            input: input.to_vec(),
+            timeout,
+            response_tx,
+        })?;
+
+        response_rx
+            .recv_timeout(timeout + std::time::Duration::from_secs(2))
+            .map_err(|_| format!("命令执行超时（{} 秒）", timeout.as_secs()))?
+    }
+
     /// 如果 busybox 已启用，用 busybox sh -c 执行命令
     /// busybox sh 是静态链接的，不受 LD_PRELOAD 和被篡改的系统命令影响
     fn wrap_with_busybox(&self, command: &str) -> String {
@@ -1629,16 +2040,27 @@ impl SSHManagerRussh {
     /// Read file contents on current session
     pub fn read_sftp_file(&self, path: &str) -> Result<Vec<u8>, String> {
         let session_id = self.get_current_session()?;
-        self.read_sftp_file_on_session(&session_id, path)
+        self.read_sftp_file_on_session(&session_id, path, None)
+    }
+
+    pub fn read_sftp_file_limited(&self, path: &str, max_bytes: usize) -> Result<Vec<u8>, String> {
+        let session_id = self.get_current_session()?;
+        self.read_sftp_file_on_session(&session_id, path, Some(max_bytes))
     }
     
     /// Read file contents on specific session
-    pub fn read_sftp_file_on_session(&self, session_id: &str, path: &str) -> Result<Vec<u8>, String> {
+    pub fn read_sftp_file_on_session(
+        &self,
+        session_id: &str,
+        path: &str,
+        max_bytes: Option<usize>,
+    ) -> Result<Vec<u8>, String> {
         let (response_tx, response_rx) = mpsc::channel();
         
         self.send_to_worker(WorkerCommand::ReadSftpFile {
                 session_id: session_id.to_string(),
                 path: path.to_string(),
+                max_bytes,
                 response_tx,
             })
 ?;
@@ -2280,7 +2702,7 @@ echo "PATH=$PATH""#;
         };
         
         let output = self.execute_command(&cmd)?;
-        if output.exit_code.unwrap_or(0) != 0 {
+        if output.timed_out || output.exit_code != Some(0) {
             return Err(format!("Compression failed: {}", output.output));
         }
         Ok(())
@@ -2326,7 +2748,12 @@ echo "PATH=$PATH""#;
         };
 
         let output = self.execute_command(&cmd)?;
-        let exit_code = output.exit_code.unwrap_or(0);
+        if output.timed_out {
+            return Err(format!("Extraction failed: {}", output.output));
+        }
+        let exit_code = output
+            .exit_code
+            .ok_or_else(|| "Extraction failed: command returned no exit status".to_string())?;
 
         // `tar -k` 遇到已存在的文件会报错并返回 2，这在不覆盖模式下是预期行为，
         // 不应视为解压失败；其余非零退出码仍然是真失败。
@@ -2342,24 +2769,32 @@ echo "PATH=$PATH""#;
     
     /// Upload file from local to remote
     pub fn upload_file(&self, local_path: &str, remote_path: &str) -> Result<(), String> {
-        // Read local file
-        let content = std::fs::read(local_path)
-            .map_err(|e| format!("Failed to read local file: {}", e))?;
-        
-        // Write to remote via SFTP
-        self.write_sftp_file(remote_path, &content)
+        let session_id = self.get_current_session()?;
+        let (response_tx, response_rx) = mpsc::channel();
+        self.send_to_worker(WorkerCommand::UploadLocalFile {
+            session_id,
+            local_path: local_path.to_string(),
+            remote_path: remote_path.to_string(),
+            response_tx,
+        })?;
+        response_rx
+            .recv_timeout(SFTP_RESPONSE_TIMEOUT)
+            .map_err(|_| "上传任务未在预期时间内返回".to_string())?
     }
     
     /// Download file from remote to local
     pub fn download_file(&self, remote_path: &str, local_path: &str) -> Result<(), String> {
-        // Read from remote via SFTP
-        let content = self.read_sftp_file(remote_path)?;
-        
-        // Write to local file
-        std::fs::write(local_path, &content)
-            .map_err(|e| format!("Failed to write local file: {}", e))?;
-        
-        Ok(())
+        let session_id = self.get_current_session()?;
+        let (response_tx, response_rx) = mpsc::channel();
+        self.send_to_worker(WorkerCommand::DownloadRemoteFile {
+            session_id,
+            remote_path: remote_path.to_string(),
+            local_path: local_path.to_string(),
+            response_tx,
+        })?;
+        response_rx
+            .recv_timeout(SFTP_RESPONSE_TIMEOUT)
+            .map_err(|_| "下载任务未在预期时间内返回".to_string())?
     }
     
     /// Create directory (alias for create_sftp_directory for backward compatibility)
