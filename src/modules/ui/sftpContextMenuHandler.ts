@@ -4,6 +4,7 @@
  */
 
 import { sftpManager } from '../remote/sftpManager';
+import { downloadSftpFile } from '../sftp/downloadFile';
 import { showConfirm, showPrompt } from './confirmDialog';
 
 const CTX_MENU_ID = 'sftp-context-menu';
@@ -250,28 +251,7 @@ export function initSftpContextMenuHandler(): void {
   });
 
   (window as any).sftpDownloadSelected = () => withFileAction(async (file) => {
-    if (file.file_type === 'directory') {
-      window.showNotification && window.showNotification('不能下载目录，请选择文件', 'warning');
-      return;
-    }
-    const remotePath = `${sftpManager.getCurrentPath()}/${file.name}`;
-    try {
-      const savePath = await (window as any).__TAURI__.dialog.save({
-        defaultPath: file.name,
-        filters: [{ name: '所有文件', extensions: ['*'] }]
-      });
-      if (savePath) {
-        window.showNotification && window.showNotification(`开始下载: ${file.name}`, 'info');
-        await (window as any).__TAURI__.core.invoke('sftp_download', {
-          remotePath: remotePath,
-          localPath: savePath
-        });
-        window.showNotification && window.showNotification(`文件下载成功: ${file.name}`, 'success');
-      }
-    } catch (error) {
-      console.error('下载文件失败:', error);
-      window.showNotification && window.showNotification(`下载文件失败: ${error}`, 'error');
-    }
+    await downloadSftpFile(file, (message, type) => window.showNotification?.(message, type));
   });
 
   (window as any).sftpCopyPathSelected = () => withFileAction(async (file) => {

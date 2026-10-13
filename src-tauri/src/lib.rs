@@ -246,7 +246,7 @@ pub fn run() {
             // Web 终端
             open_web_terminal,
         ])
-        .setup(|app| {
+        .setup(|_app| {
             // 应用初始化逻辑
             println!("🚀 LovelyRes 后端初始化完成");
 
@@ -256,7 +256,7 @@ pub fn run() {
             // 在 Windows 开发环境下，强制关闭主窗口的原生标题栏（decorations），避免 dev 下平台特定配置未生效
             #[cfg(target_os = "windows")]
             {
-                if let Some(main) = app.get_webview_window("main") {
+                if let Some(main) = _app.get_webview_window("main") {
                     if let Err(e) = main.set_decorations(false) {
                         eprintln!("⚠️ 设置窗口装饰失败: {}", e);
                     } else {

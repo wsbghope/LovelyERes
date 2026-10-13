@@ -6,6 +6,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core';
+import { downloadSftpFile } from '../sftp/downloadFile';
 
 const I_COPY = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>`;
 const I_DOWN = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 11l5 5 5-5"/><path d="M5 21h14"/></svg>`;
@@ -173,11 +174,9 @@ export function initSftpDetailPanel(): void {
   w.sftpDetailCopyPath = () => { if (currentFile) copyText(currentFile.path); };
   w.sftpCopyHash = () => copyText(document.getElementById('sftp-detail-hash')?.textContent || '');
   w.sftpDetailHash = () => { if (currentFile) void fetchDetail(currentFile); };
-  w.sftpDetailDownload = () => {
+  w.sftpDetailDownload = async () => {
     if (!currentFile) return;
-    if (w.sftpDownloadSelected) { w.sftpDownloadSelected(); return; }
-    invoke('sftp_download', { remotePath: currentFile.path }).catch(() => {});
-    w.showNotification?.('开始下载…', 'info');
+    await downloadSftpFile(currentFile, (message, type) => w.showNotification?.(message, type));
   };
 }
 

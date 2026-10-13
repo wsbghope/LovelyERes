@@ -510,8 +510,8 @@ export class SftpManager {
    */
   async handleFileClickByIndex(index: number): Promise<void> {
     try {
-      if (index >= 0 && index < this.fileList.length) {
-        const file = this.fileList[index];
+      const file = this.getFileByIndex(index);
+      if (file) {
         console.log('🖱️ 点击文件:', file.name, '类型:', file.file_type);
 
         if (this.isNavigating) {
@@ -529,7 +529,7 @@ export class SftpManager {
 
   public getFileByIndex(index: number): SftpFileInfo | null {
     if (index < 0 || index >= this.fileList.length) return null;
-    return this.fileList[index];
+    return this.getCurrentFiles()[index];
   }
 
   private isNavigating: boolean = false;
