@@ -405,7 +405,7 @@ export class EmergencyRenderer {
               <span style="font-size:14px;font-weight:600;color:var(--text-primary);">比赛开局加固</span>
               <div style="display:flex;gap:8px;">
                 <button class="qd-action-btn" data-qd-action="check-all-hardening">检查状态</button>
-                <button class="qd-action-btn primary" data-qd-action="harden-all">一键全部加固</button>
+                <span style="color:var(--text-secondary);font-size:12px">逐项确认后执行加固</span>
               </div>
             </div>
             <div id="qd-hardening-list" class="qd-hardening-groups">

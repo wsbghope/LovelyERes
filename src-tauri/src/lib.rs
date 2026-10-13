@@ -135,7 +135,6 @@ pub fn run() {
             commands::ssh_commands::start_packet_capture,
             commands::ssh_commands::stop_packet_capture,
             commands::ssh_commands::check_packet_capture_privilege,
-            commands::ssh_commands::prepare_packet_capture_tool,
             commands::ssh_commands::cleanup_packet_capture_tools,
             commands::ssh_commands::get_network_interfaces,
             resource_repository::get_resource_directory,

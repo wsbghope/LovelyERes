@@ -7,7 +7,7 @@
 @import './_log-analysis.css';
 @import './_kubernetes.css';
 @import './_baseline.css';
-/* _quick-detection.css removed */
+@import './_quick-detection.css';
 @import './_packet-capture.css';
 @import './_database.css';
 @import './_java-hot-update.css';

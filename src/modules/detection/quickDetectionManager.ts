@@ -702,7 +702,7 @@ export class QuickDetectionManager {
   /**
    * UI 方法：全选/取消检测项
    */
-  toggleAllChecks(category: 'security' | 'performance'): void {
+  toggleAllChecks(category: 'security' | 'competition' | 'performance'): void {
     const checkboxes = document.querySelectorAll(`.detection-item[data-category="${category}"] input[type="checkbox"]`);
     if (checkboxes.length === 0) return;
 
@@ -1012,8 +1012,15 @@ export class QuickDetectionManager {
   /** 执行单个加固项 */
   async executeHardening(item: HardeningItem): Promise<string> {
     try {
-      const result = await invoke('ssh_execute_command_direct', { command: item.fixCommand }) as any;
-      return result?.output || 'done';
+      let command = item.fixCommand;
+      if (item.id === 'h-fw-default') {
+        const port = Number((window as any).sshConnectionManager?.getConnectionStatus?.()?.port);
+        if (!Number.isInteger(port) || port < 1 || port > 65535) return 'failed: 无法确认当前 SSH 端口';
+        command = command.replace('__SSH_PORT__', String(port));
+      }
+      const result = await invoke('ssh_execute_command_direct', { command }) as any;
+      if (result?.exit_code !== 0) return `failed: ${result?.output || `退出码 ${result?.exit_code ?? '未知'}`}`;
+      return result?.output || '命令已执行，请检查加固状态';
     } catch (e) { return `failed: ${e}`; }
   }
 
@@ -1029,6 +1036,7 @@ export class QuickDetectionManager {
             const resolved = resolveForDistro ? resolveForDistro(item, 'generic') : item;
             return {
               id: item.id,
+              filePath: resolved.filePath || item.filePath,
               readCommand: resolved.readCommand || item.readCommand,
               writeCommand: resolved.writeCommand || item.writeCommand,
               parseRegex: item.parseRegex,
@@ -1048,7 +1056,8 @@ export class QuickDetectionManager {
   private getServerInfo(): string {
     try {
       const conn = (window as any).sshConnectionManager;
-      return conn?.getConnectionStatus?.()?.host || 'unknown';
+      const status = conn?.getConnectionStatus?.();
+      return status?.connected ? `${status.username}@${status.host}:${status.port}` : 'unknown';
     } catch { return 'unknown'; }
   }
 }

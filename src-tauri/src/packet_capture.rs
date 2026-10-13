@@ -25,9 +25,6 @@ pub struct PacketCapturePrivilege {
     pub mode: String,
     pub username: String,
     pub message: String,
-    pub architecture: Option<String>,
-    pub remote_path: Option<String>,
-    pub can_deploy: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

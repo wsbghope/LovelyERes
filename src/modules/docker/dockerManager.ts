@@ -14,6 +14,7 @@ import type {
 } from './types';
 import { sshConnectionManager } from '../remote/sshConnectionManager';
 import { logger } from '../core/logger';
+import { shellQuote } from '../utils/shellSafety';
 
 const log = logger.module('DockerManager');
 
@@ -499,20 +500,31 @@ export class DockerManager {
 
   async disconnectAllNetworks(containerRef: string): Promise<{ success: boolean; output: string }> {
     const networks = await this.execSSH(
-      `docker inspect ${containerRef} --format "{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}"`
+      `docker inspect ${shellQuote(containerRef)} --format "{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}"`
     );
-    if (!networks || !networks.output.trim()) {
-      return { success: false, output: 'No networks found' };
+    if (!networks || networks.exit_code !== 0 || !networks.output.trim()) {
+      return { success: false, output: networks?.output || '无法读取容器网络，或容器未连接网络' };
     }
 
     const netNames = networks.output.trim().split(/\s+/).filter(Boolean);
     const results: string[] = [];
+    let disconnected = 0;
+    let failed = 0;
     for (const net of netNames) {
-      if (net === 'bridge' || net === 'host' || net === 'none') continue;
-      const r = await this.execSSH(`docker network disconnect ${net} ${containerRef}`);
-      results.push(`${net}: ${r?.exit_code === 0 ? 'disconnected' : 'failed'}`);
+      if (net === 'host' || net === 'none') {
+        results.push(`${net}: 网络模式无法断开`);
+        failed++;
+        continue;
+      }
+      const r = await this.execSSH(`docker network disconnect -f ${shellQuote(net)} ${shellQuote(containerRef)}`);
+      if (r?.exit_code === 0) disconnected++;
+      else failed++;
+      results.push(`${net}: ${r?.exit_code === 0 ? '已断开' : `断开失败 ${r?.output || ''}`}`);
     }
-    return { success: true, output: results.join('\n') };
+    return {
+      success: disconnected > 0 && failed === 0,
+      output: `${disconnected} 个网络已断开，${failed} 个未断开\n${results.join('\n')}`,
+    };
   }
 }
 

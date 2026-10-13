@@ -12,6 +12,7 @@ import { SftpContextMenuRenderer } from './sftpContextMenu';
 import { LogAnalysisRenderer } from './logAnalysisRenderer';
 import { DatabaseRenderer } from './databaseRenderer';
 import { PacketCaptureRenderer } from './packetCaptureRenderer';
+import { forensicPage } from '../emergency/forensicPage';
 
 import { SystemInfoRenderer } from './renderers/systemInfoRenderer';
 import { ServerModalRenderer } from './renderers/serverModalRenderer';
@@ -523,6 +524,8 @@ export class ModernUIRenderer {
         id: 'emergency', label: '应急响应', accent: '#f87171', icon: Shield(ico),
         items: [
           { id: 'emergency-commands', icon: Code(ico), title: '命令执行' },
+          { id: 'quick-detection', icon: Shield(ico), title: '快速检测' },
+          { id: 'forensic', icon: FileText(ico), title: '主机取证' },
           { id: 'packet-capture', icon: NetworkTree(ico), title: '网络抓包' },
           { id: 'log-analysis', icon: Log(ico), title: '日志审计' },
           // 文件上传是应急响应的独立页面，不属于命令执行的页内功能。
@@ -767,6 +770,10 @@ export class ModernUIRenderer {
         return this.renderDockerPage();
       case 'emergency-commands':
         return this.renderEmergencyCommandsPage();
+      case 'quick-detection':
+        return this.emergencyRenderer.renderQuickDetectionPage();
+      case 'forensic':
+        return forensicPage.render();
       case 'file-upload':
         return this.renderFileUploadPage();
       case 'kubernetes':

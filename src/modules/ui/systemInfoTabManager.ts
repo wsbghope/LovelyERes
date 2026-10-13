@@ -5,6 +5,38 @@
  */
 
 import { sshConnectionManager } from '../remote/sshConnectionManager';
+import { liveMonitor, type SystemMetrics, type MetricsHistory } from '../monitoring/liveMonitor';
+
+function renderMonitor(metrics: SystemMetrics, history: MetricsHistory): void {
+  const container = document.getElementById('live-monitor-metrics');
+  if (!container) return;
+  const cards = [
+    ['CPU', `${metrics.cpu.usage.toFixed(1)}%`],
+    ['内存', `${metrics.memory.percent.toFixed(1)}%`],
+    ['根分区', `${metrics.disk.percent}%`],
+    ['接收', `${(metrics.network.rxRate / 1024).toFixed(1)} KiB/s`],
+    ['发送', `${(metrics.network.txRate / 1024).toFixed(1)} KiB/s`],
+    ['负载', metrics.load.load1.toFixed(2)],
+  ];
+  container.innerHTML = cards.map(([name, value]) => `<div class="modern-card" style="padding:16px"><div>${name}</div><strong>${value}</strong></div>`).join('');
+  const status = document.getElementById('live-monitor-status');
+  if (status) status.textContent = `最近采样：${new Date(metrics.timestamp).toLocaleTimeString()} · 运行时间 ${metrics.uptime}`;
+  const historyEl = document.getElementById('live-monitor-history');
+  if (historyEl) historyEl.textContent = `CPU: ${history.cpu.map(n => n.toFixed(0)).join(' · ')}%`;
+}
+
+liveMonitor.onUpdate(renderMonitor);
+sshConnectionManager.addListener(status => {
+  if (!status?.connected) {
+    liveMonitor.stop();
+    const label = document.getElementById('live-monitor-status');
+    if (label) label.textContent = '连接已断开，监控已停止';
+  }
+});
+
+export function stopSystemInfoMonitor(): void {
+  liveMonitor.stop();
+}
 
 // tabId → detailedInfo 属性名映射（模块级常量）
 const dataKeyMap: Record<string, string> = {
@@ -95,6 +127,7 @@ function getActiveTabId(): string | null {
 
 function switchSystemInfoTab(tabId: string): void {
   console.log('🔄 切换系统信息标签页:', tabId);
+  if (tabId !== 'monitor') liveMonitor.stop();
 
   // 更新主侧边栏中系统信息 tab 叶子的 active 状态，并同步分组高亮
   document.querySelectorAll('.sidebar-item[data-tab]').forEach(btn => {
@@ -111,6 +144,16 @@ function switchSystemInfoTab(tabId: string): void {
       const expectedContent = renderer.renderSystemInfoTab(tabId);
       if (!currentContent || !currentContent.includes(`id="${tabId}-table-body"`)) {
         contentContainer.innerHTML = expectedContent;
+      }
+      if (tabId === 'monitor') {
+        if (!sshConnectionManager.isConnected()) {
+          const label = document.getElementById('live-monitor-status');
+          if (label) label.textContent = '请先连接服务器';
+          return;
+        }
+        if (liveMonitor.latest) renderMonitor(liveMonitor.latest, liveMonitor.metricsHistory);
+        liveMonitor.start();
+        return;
       }
 
       const cache = (window as any).systemInfoCache;
@@ -169,7 +212,7 @@ async function loadSystemDetailedInfo(forceRefresh = false): Promise<any> {
     if (!forceRefresh && cacheValid && !cache.isLoading) {
       console.log('📋 使用缓存的系统详细信息');
       const activeTabId = getActiveTabId() || 'processes';
-      loadSystemInfoTabData(activeTabId, cache.detailedInfo);
+      if (activeTabId !== 'monitor') loadSystemInfoTabData(activeTabId, cache.detailedInfo);
       const app = (window as any).app;
       if (app?.modernUIRenderer?.updateSystemInfoTabs) {
         app.modernUIRenderer.updateSystemInfoTabs(cache.detailedInfo);
@@ -190,7 +233,7 @@ async function loadSystemDetailedInfo(forceRefresh = false): Promise<any> {
 
     // 显示当前标签页的加载状态
     const currentTabId = getActiveTabId();
-    if (currentTabId) {
+    if (currentTabId && currentTabId !== 'monitor') {
       showTableLoadingState(currentTabId);
     }
 
@@ -246,7 +289,7 @@ async function loadSystemDetailedInfo(forceRefresh = false): Promise<any> {
 
       // 确保当前标签页显示最终数据
       const activeTabId = getActiveTabId();
-      if (activeTabId) {
+      if (activeTabId && activeTabId !== 'monitor') {
         loadSystemInfoTabData(activeTabId, detailedInfo);
       }
 
@@ -313,7 +356,7 @@ async function refreshAllSystemInfo(): Promise<void> {
 
     // 显示当前标签页的加载状态（不替换整个容器）
     const currentTabId = getActiveTabId();
-    if (currentTabId) {
+    if (currentTabId && currentTabId !== 'monitor') {
       showTableLoadingState(currentTabId);
     }
 

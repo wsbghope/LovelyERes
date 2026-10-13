@@ -34,9 +34,6 @@ interface PacketCapturePrivilege {
   mode: 'direct' | 'sudo_nopasswd' | 'sudo_password' | 'tool_missing' | 'unavailable';
   username: string;
   message: string;
-  architecture: string | null;
-  remote_path: string | null;
-  can_deploy: boolean;
 }
 
 type PacketTab = 'realtime' | 'statistics' | 'conversations' | 'dns-http' | 'threat';

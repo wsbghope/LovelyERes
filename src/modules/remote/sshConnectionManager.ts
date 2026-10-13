@@ -103,13 +103,6 @@ export class SSHSessionManager {
       // 通知监听器
       this.notifyListeners();
 
-      // 初始化终端工作目录
-      if ((window as any).terminalManager && (window as any).terminalManager.initializeWorkingDirectory) {
-        setTimeout(() => {
-          (window as any).terminalManager.initializeWorkingDirectory();
-        }, 500);
-      }
-
     } catch (error) {
       console.error('SSH连接失败:', error);
       throw error;

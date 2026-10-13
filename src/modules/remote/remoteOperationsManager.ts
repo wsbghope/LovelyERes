@@ -1,14 +1,15 @@
 /**
  * 远程操作管理器
- * 统一协调SSH连接、SFTP文件管理和终端操作
+ * 统一协调SSH连接和SFTP文件管理
  */
 
 import { sshConnectionManager, SSHConnectionInfo } from './sshConnectionManager';
 import { sftpManager } from './sftpManager';
-import { terminalManager } from './terminalManager';
 
 export class RemoteOperationsManager {
   private initialized = false;
+  private readonly sshListener = this.onSSHConnectionStatusChanged.bind(this);
+  private readonly sftpListener = this.onSftpFileListChanged.bind(this);
   private lastConnectionStatus: SSHConnectionInfo | null = null;
   private lastSftpPath: string = '';
   private lastSftpFileCount: number = 0;
@@ -20,13 +21,10 @@ export class RemoteOperationsManager {
     if (this.initialized) return;
 
     // 设置SSH连接状态监听器
-    sshConnectionManager.addListener(this.onSSHConnectionStatusChanged.bind(this));
+    sshConnectionManager.addListener(this.sshListener);
 
     // 设置SFTP文件列表监听器
-    sftpManager.addListener(this.onSftpFileListChanged.bind(this));
-
-    // 设置终端历史监听器
-    terminalManager.addListener(this.onTerminalHistoryChanged.bind(this));
+    sftpManager.addListener(this.sftpListener);
 
     // 检查现有连接状态
     await this.checkExistingConnection();
@@ -47,8 +45,6 @@ export class RemoteOperationsManager {
         console.log('🔗 发现现有SSH连接:', status);
         // 刷新SFTP文件列表
         await sftpManager.refreshFileList();
-        // 更新终端状态
-        terminalManager.updateTerminalDisplay();
       }
     } catch (error) {
       console.error('检查现有连接状态失败:', error);
@@ -107,23 +103,12 @@ export class RemoteOperationsManager {
   }
 
   /**
-   * 终端历史变化处理
-   */
-  private onTerminalHistoryChanged(history: any[]): void {
-    console.log('💻 终端历史更新:', { commandCount: history.length });
-    terminalManager.updateTerminalDisplay();
-  }
-
-  /**
    * 刷新远程操作（连接成功后调用）
    */
   private async refreshRemoteOperations(): Promise<void> {
     try {
       // 刷新SFTP文件列表
       await sftpManager.refreshFileList();
-      
-      // 更新终端状态
-      terminalManager.updateTerminalDisplay();
       
       // 更新UI显示
       this.updateSftpDisplay();
@@ -140,8 +125,6 @@ export class RemoteOperationsManager {
     // 更新SFTP显示
     this.updateSftpDisplay();
     
-    // 更新终端显示
-    terminalManager.updateTerminalDisplay();
   }
 
   /**
@@ -182,20 +165,6 @@ export class RemoteOperationsManager {
   }
 
   /**
-   * 执行终端命令
-   */
-  async executeTerminalCommand(command: string): Promise<void> {
-    await terminalManager.executeCommand(command);
-  }
-
-  /**
-   * 清空终端历史
-   */
-  clearTerminalHistory(): void {
-    terminalManager.clearHistory();
-  }
-
-  /**
    * 导航到SFTP路径
    */
   async navigateToSftpPath(path: string): Promise<void> {
@@ -207,9 +176,8 @@ export class RemoteOperationsManager {
    */
   destroy(): void {
     // 移除监听器
-    sshConnectionManager.removeListener(this.onSSHConnectionStatusChanged.bind(this));
-    sftpManager.removeListener(this.onSftpFileListChanged.bind(this));
-    terminalManager.removeListener(this.onTerminalHistoryChanged.bind(this));
+    sshConnectionManager.removeListener(this.sshListener);
+    sftpManager.removeListener(this.sftpListener);
     
     this.initialized = false;
     console.log('🗑️ 远程操作管理器已销毁');

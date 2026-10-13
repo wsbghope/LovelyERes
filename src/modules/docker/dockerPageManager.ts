@@ -1,5 +1,6 @@
 import { dockerManager } from './dockerManager';
 import { showConfirm } from '../ui/confirmDialog';
+import { escapeHtml } from '../utils/safeHtml';
 import type {
   DockerContainerSummary,
   DockerCopyDirection,
@@ -565,6 +566,19 @@ export class DockerPageManager {
   // ============================================================
 
   private renderSecurityTab(): string {
+    const emergency = (window as any).app?.dockerEmergencyManager;
+    const history = emergency?.getActionHistory() || [];
+    const emergencyPanel = `<div class="docker-card" style="padding:16px;margin-bottom:18px">
+      <h3>容器应急与取证</h3>
+      <p>隔离网络会中断容器通信；取证快照会读取容器配置、日志、进程及文件变化。</p>
+      ${this.containers.map(container => `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 0;border-top:1px solid var(--border-color)">
+        <strong style="flex:1">${escapeHtml(container.name)}</strong>
+        <button class="modern-btn secondary sm" data-docker-action="forensic" data-container="${escapeHtml(container.name)}">取证并导出</button>
+        <button class="modern-btn danger sm" data-docker-action="isolate-network" data-container="${escapeHtml(container.name)}">隔离网络</button>
+      </div>`).join('')}
+      ${history.length ? `<h4>本次会话操作记录</h4>${history.slice(-10).reverse().map((entry: any) =>
+        `<div>${escapeHtml(entry.type)} · ${escapeHtml(entry.target)} · ${escapeHtml(entry.status)}</div>`).join('')}` : ''}
+    </div>`;
     const scanBtn = `
     <div style="display:flex;align-items:center;gap:var(--spacing-md);margin-bottom:var(--spacing-md);">
       <button class="modern-btn primary" data-docker-action="run-audit" style="display:flex;align-items:center;gap:6px;">
@@ -574,13 +588,13 @@ export class DockerPageManager {
     </div>`;
 
     if (!this.auditResult) {
-      return scanBtn + this.renderEmptyInline('安全审计', '点击上方按钮运行 Docker 安全审计');
+      return emergencyPanel + scanBtn + this.renderEmptyInline('安全审计', '点击上方按钮运行 Docker 安全审计');
     }
 
     const r = this.auditResult;
     const scoreClass = r.summary.score >= 80 ? 'good' : r.summary.score >= 50 ? 'warning' : 'danger';
 
-    return scanBtn + `
+    return emergencyPanel + scanBtn + `
     <div style="display:grid;grid-template-columns:auto 1fr;gap:var(--spacing-lg);margin-bottom:var(--spacing-md);">
       <div style="display:flex;flex-direction:column;align-items:center;gap:var(--spacing-sm);">
         <div class="docker-score-gauge ${scoreClass}">${r.summary.score}</div>
@@ -735,6 +749,36 @@ export class DockerPageManager {
 
         // Security
         case 'run-audit': await this.runAudit(); break;
+        case 'forensic': {
+          const name = el.getAttribute('data-container');
+          const container = this.containers.find(c => c.name === name);
+          const emergency = (window as any).app?.dockerEmergencyManager;
+          if (!container || !emergency) break;
+          window.showNotification?.('正在采集容器快照...', 'info');
+          const report = await emergency.captureForensicSnapshot(container.id, container.name);
+          this.logsModal.show(`容器取证 — ${container.name}`, JSON.stringify(report, null, 2));
+          const blobUrl = URL.createObjectURL(new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' }));
+          const link = document.createElement('a');
+          link.href = blobUrl;
+          link.download = `docker-forensic-${container.id}-${Date.now()}.json`;
+          link.click();
+          setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+          break;
+        }
+        case 'isolate-network': {
+          const name = el.getAttribute('data-container');
+          const emergency = (window as any).app?.dockerEmergencyManager;
+          if (!name || !emergency) break;
+          if (!await showConfirm({
+            title: '隔离容器网络',
+            message: `断开 ${name} 的所有 Docker 网络？容器通信将立即中断，此操作无法通过重启自动恢复。`,
+            dangerous: true,
+          })) break;
+          const result = await emergency.emergencyDisconnectNetwork(name);
+          window.showNotification?.(result.status === 'completed' ? '网络已断开' : `隔离未完全成功: ${result.error}`, result.status === 'completed' ? 'success' : 'error');
+          await this.refresh(false);
+          break;
+        }
         case 'remove-privileged': {
           const name = el.getAttribute('data-container');
           if (name) await this.removePrivileged(name);

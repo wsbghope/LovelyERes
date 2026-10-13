@@ -14,15 +14,15 @@ export interface CommandPalettePage {
 
 /** 可导航的页面列表 */
 export const commandPalettePages: CommandPalettePage[] = [
-  { id: 'dashboard', title: '仪表板', desc: '系统监控总览', shortcut: 'Ctrl+1' },
-  { id: 'system-info', title: '系统信息', desc: '进程 / 网络 / 服务 / 用户', shortcut: 'Ctrl+2' },
-  { id: 'remote-operations', title: 'SFTP文件', desc: '远程文件管理', shortcut: 'Ctrl+3' },
-  { id: 'docker', title: 'Docker容器', desc: '容器管理', shortcut: 'Ctrl+4' },
-  { id: 'emergency-commands', title: '命令执行', desc: '应急命令', shortcut: 'Ctrl+5' },
-  { id: 'packet-capture', title: '网络抓包', desc: '流量分析', shortcut: 'Ctrl+6' },
-  { id: 'log-analysis', title: '日志审计', desc: '日志分析', shortcut: 'Ctrl+8' },
+  { id: 'system-info', title: '系统信息', desc: '状态 / 实时监控 / 进程', shortcut: 'Ctrl+1' },
+  { id: 'remote-operations', title: 'SFTP文件', desc: '远程文件管理', shortcut: 'Ctrl+2' },
+  { id: 'docker', title: 'Docker容器', desc: '容器管理', shortcut: 'Ctrl+3' },
+  { id: 'emergency-commands', title: '命令执行', desc: '应急命令', shortcut: 'Ctrl+4' },
+  { id: 'packet-capture', title: '网络抓包', desc: '流量分析', shortcut: 'Ctrl+5' },
+  { id: 'quick-detection', title: '快速检测', desc: '安全检测', shortcut: 'Ctrl+6' },
+  { id: 'log-analysis', title: '日志审计', desc: '日志分析', shortcut: 'Ctrl+7' },
   { id: 'file-upload', title: '文件上传', desc: '应急响应工具与文件上传', shortcut: '' },
-  { id: 'quick-detection', title: '快速检测', desc: '安全检测', shortcut: 'Ctrl+7' },
+  { id: 'forensic', title: '主机取证', desc: '采集和比较系统快照', shortcut: '' },
   { id: 'web-terminal', title: 'Web 终端', desc: '连接 ttyd/wetty 等 Web 终端', shortcut: '' },
 ];
 

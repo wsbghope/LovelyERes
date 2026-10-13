@@ -4,6 +4,7 @@
  */
 
 import { executeEmergencyCommand, formatCommandResult } from './commandExecution';
+import { sshConnectionManager } from '../remote/sshConnectionManager';
 
 // ========== 数据类型 ==========
 
@@ -50,6 +51,13 @@ const SNAPSHOT_COMMANDS: Record<keyof SnapshotData, string> = {
 export class ForensicManager {
   private snapshots: ForensicSnapshot[] = [];
 
+  private assertServer(server: string): void {
+    const connection = sshConnectionManager.getConnectionStatus();
+    if (!connection?.connected || `${connection.username}@${connection.host}:${connection.port}` !== server) {
+      throw new Error('采集期间服务器连接已切换或断开');
+    }
+  }
+
   /** 采集一次完整快照 */
   async captureSnapshot(server: string, onProgress?: (pct: number, label: string) => void): Promise<ForensicSnapshot> {
     const keys = Object.keys(SNAPSHOT_COMMANDS) as (keyof SnapshotData)[];
@@ -58,6 +66,7 @@ export class ForensicManager {
     onProgress?.(5, '准备采集');
 
     for (let i = 0; i < keys.length; i++) {
+      this.assertServer(server);
       const key = keys[i];
       onProgress?.(Math.round((i / keys.length) * 95) + 5, key);
       try {
@@ -71,6 +80,7 @@ export class ForensicManager {
       } catch (error) {
         data[key] = `(failed to collect: ${error})`;
       }
+      this.assertServer(server);
     }
     onProgress?.(100, '完成');
 
@@ -82,7 +92,6 @@ export class ForensicManager {
     };
 
     this.snapshots.push(snapshot);
-    // 持久化到 localStorage
     this.saveToStorage();
     return snapshot;
   }
@@ -90,6 +99,16 @@ export class ForensicManager {
   /** 获取所有快照 */
   getSnapshots(): ForensicSnapshot[] {
     return [...this.snapshots];
+  }
+
+  deleteSnapshot(id: string): void {
+    this.snapshots = this.snapshots.filter(snapshot => snapshot.id !== id);
+    this.saveToStorage();
+  }
+
+  clearSnapshots(): void {
+    this.snapshots = [];
+    localStorage.removeItem('lovelyres-forensic-snapshots');
   }
 
   /** 比对两个快照并返回差异 */
@@ -125,10 +144,9 @@ export class ForensicManager {
   // ========== 存储 ==========
 
   private saveToStorage(): void {
+    this.snapshots = this.snapshots.slice(-10);
     try {
-      // 只保留最近 10 个快照
-      const recent = this.snapshots.slice(-10);
-      localStorage.setItem('lovelyres-forensic-snapshots', JSON.stringify(recent));
+      localStorage.setItem('lovelyres-forensic-snapshots', JSON.stringify(this.snapshots));
     } catch { /* quota exceeded, ignore */ }
   }
 

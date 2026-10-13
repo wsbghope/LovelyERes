@@ -94,7 +94,8 @@ export class DockerEmergencyManager {
             if (result.success) {
                 action.status = 'completed';
                 action.result = `Network disconnected:\n${result.output}`;
-                action.rollbackCommand = `docker restart ${containerRef}`;
+                // Restarting a container does not restore manually disconnected networks.
+                action.rollbackCommand = '';
             } else {
                 action.status = 'failed';
                 action.error = result.output;

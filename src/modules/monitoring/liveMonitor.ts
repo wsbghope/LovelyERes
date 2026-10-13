@@ -34,6 +34,7 @@ export class LiveMonitor {
   private static instance: LiveMonitor;
   private intervalId: number | null = null;
   private isPolling = false;
+  private generation = 0;
   private history: MetricsHistory = {
     timestamps: [], cpu: [], memory: [], disk: [],
     rxRate: [], txRate: [], load1: [],
@@ -67,6 +68,12 @@ export class LiveMonitor {
   /** 启动定时采集 */
   start(intervalMs = 5000): void {
     if (this.intervalId) return;
+    this.generation++;
+    this.lastNetTime = 0;
+    this.lastNetRx = 0;
+    this.lastNetTx = 0;
+    this.lastMetrics = null;
+    this.history = { timestamps: [], cpu: [], memory: [], disk: [], rxRate: [], txRate: [], load1: [] };
     console.log(`📊 实时监控启动 (每 ${intervalMs / 1000}s)`);
 
     // 立即采集一次
@@ -78,6 +85,7 @@ export class LiveMonitor {
 
   /** 停止采集 */
   stop(): void {
+    this.generation++;
     if (this.intervalId) {
       clearInterval(this.intervalId);
       this.intervalId = null;
@@ -103,10 +111,11 @@ export class LiveMonitor {
   private async poll(): Promise<void> {
     if (this.isPolling) return;
     this.isPolling = true;
+    const generation = this.generation;
 
     try {
-      const raw = await this.fetchMetrics();
-      if (raw) {
+      const raw = await this.fetchMetrics(generation);
+      if (raw && generation === this.generation && this.running) {
         this.lastMetrics = raw;
         this.pushHistory(raw);
         this.notify(raw);
@@ -118,7 +127,7 @@ export class LiveMonitor {
     }
   }
 
-  private async fetchMetrics(): Promise<SystemMetrics | null> {
+  private async fetchMetrics(generation: number): Promise<SystemMetrics | null> {
     const cmd = `
       echo "===CPU==="
       top -bn1 2>/dev/null | head -5
@@ -136,6 +145,7 @@ export class LiveMonitor {
 
     try {
       const result: any = await invoke('ssh_execute_dashboard_command_direct', { command: cmd });
+      if (generation !== this.generation || !this.running) return null;
       return this.parseMetrics(result?.output || '');
     } catch {
       return null;

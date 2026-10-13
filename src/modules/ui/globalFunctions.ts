@@ -17,7 +17,9 @@ import { remoteOperationsManager } from '../remote/remoteOperationsManager';
 import { dockerPageManager } from '../docker/dockerPageManager';
 import { emergencyPageManager } from '../emergency/emergencyPageManager';
 import { KubernetesPageManager } from '../kubernetes/kubernetesPageManager';
-// quickDetectionManager removed
+import { quickDetectionPage } from '../detection/quickDetectionPage';
+import { forensicPage } from '../emergency/forensicPage';
+import { stopSystemInfoMonitor } from './systemInfoTabManager';
 import { sshTerminalManager } from '../ssh/sshTerminalManager';
 import type { SettingsPageManager } from '../settings/settingsPageManager';
 
@@ -276,7 +278,7 @@ export function initGlobalFunctions(deps: GlobalFunctionsDeps): void {
   (window as any).sshConnectionManager = sshConnectionManager;
   (window as any).sftpManager = sftpManager;
   (window as any).sshTerminalManager = sshTerminalManager;
-  // quickDetection removed
+  (window as any).quickDetection = quickDetectionPage;
   (window as any).sshConnectionDialog = sshConnectionDialog;
 
   // (快速检测事件委托已移除)
@@ -328,9 +330,10 @@ export function initGlobalFunctions(deps: GlobalFunctionsDeps): void {
   let remoteOperationsPageInitialized = false;
   (window as any).switchPage = (pageId: string) => {
     console.log('🔄 切换页面:', pageId);
-
-    // 取消前一个页面的异步操作
-    // quickDetection cancelScan removed
+    if (pageId === 'web-terminal') {
+      (window as any).openWebTerminal?.();
+      return;
+    }
 
     // SFTP: 切走时标记需要重新绑定DOM事件，但不丢弃数据
     if (pageId !== 'remote-operations') {
@@ -359,6 +362,10 @@ export function initGlobalFunctions(deps: GlobalFunctionsDeps): void {
         // initialize is already called inside renderDockerPage()
         // Use setTimeout to ensure DOM is mounted before refresh
         setTimeout(() => dockerPageManager.refresh(true), 50);
+      } else if (pageId === 'quick-detection') {
+        quickDetectionPage.initialize();
+      } else if (pageId === 'forensic') {
+        forensicPage.initialize();
       } else if (pageId === 'emergency-commands') {
         emergencyPageManager.initialize();
       } else if (pageId === 'file-upload') {
@@ -380,9 +387,6 @@ export function initGlobalFunctions(deps: GlobalFunctionsDeps): void {
         setTimeout(() => { (window as any).refreshLogAnalysis(); }, 200);
       } else if (pageId === 'settings') {
         setTimeout(() => { settingsPageManager.initialize(); }, 100);
-      } else if (pageId === 'web-terminal') {
-        (window as any).openWebTerminal?.();
-        return;
       } else if (pageId === 'ssh-terminal') {
         openSSHTerminalWindow();
         setTimeout(() => {
@@ -474,6 +478,8 @@ export function initGlobalFunctions(deps: GlobalFunctionsDeps): void {
 
       // 离开 Docker/K8s/PacketCapture 页面时停止后台操作
       if (pageId !== 'docker') dockerPageManager.deactivate();
+      if (pageId !== 'quick-detection') quickDetectionPage.deactivate();
+      if (pageId !== 'system-info') stopSystemInfoMonitor();
       if (pageId !== 'kubernetes') {
         const kpm = (window as any).kubernetesPageManager;
         if (kpm) kpm.deactivate();

@@ -58,7 +58,7 @@ export const MLPS2_RULES: ComplianceRule[] = [
     id: 'mlps2-4', title: '访问控制 — sudo 配置',
     description: '应根据管理用户的角色分配权限，实现管理用户的权限分离',
     standard: 'mlps2', clause: '8.1.4.2 a)',
-    severity: 'high', detectionItemId: 'sudo_config', category: '访问控制',
+    severity: 'high', detectionItemId: 'sudo_audit', category: '访问控制',
   },
   {
     id: 'mlps2-5', title: '安全审计 — 审计配置',

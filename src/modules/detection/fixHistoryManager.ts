@@ -3,6 +3,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core';
+import { sshConnectionManager } from '../remote/sshConnectionManager';
 
 export interface FixHistoryEntry {
   id: string;
@@ -73,10 +74,19 @@ class FixHistoryManager {
     if (!entry) return { success: false, output: '记录不存在' };
     if (entry.rolledBack) return { success: false, output: '已回滚过' };
     if (!entry.restoreCommand) return { success: false, output: '无回滚命令' };
+    if (entry.restoreCommand.includes('backup exists')) {
+      return { success: false, output: '旧记录没有可用的恢复命令，无法自动回滚' };
+    }
+    const status = sshConnectionManager.getConnectionStatus();
+    const currentServer = status?.connected ? `${status.username}@${status.host}:${status.port}` : '';
+    if (!currentServer || (entry.server !== currentServer && entry.server !== status?.host)) {
+      return { success: false, output: '请先连接该修复记录对应的服务器' };
+    }
 
     try {
       const result = await invoke('ssh_execute_command_direct', { command: entry.restoreCommand }) as any;
       const output = result?.output || '';
+      if (result?.exit_code !== 0) return { success: false, output: `回滚失败: ${output || `退出码 ${result?.exit_code ?? '未知'}`}` };
       entry.rolledBack = true;
       this.save();
       return { success: true, output };

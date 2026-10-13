@@ -73,6 +73,7 @@ export class SystemInfoRenderer {
     type Leaf = { id: string; label: string; icon: any };
     const groups: Array<{ id: string; label: string; accent: string; icon: any; items: Leaf[] }> = [
       { id: 'si-realtime', label: '实时状态', accent: '#6db3ff', icon: System, items: [
+        { id: 'monitor', label: '实时监控', icon: Cpu },
         { id: 'processes', label: '进程详情', icon: List },
         { id: 'network', label: '网络详情', icon: Earth },
         { id: 'services', label: '系统服务', icon: System },
@@ -127,6 +128,14 @@ export class SystemInfoRenderer {
    */
   public renderSystemInfoTab(_state: AppState, tab: string): string {
     switch (tab) {
+      case 'monitor':
+        return `<section class="sys-panel" style="padding:24px">
+          <h2>实时监控</h2><p>每 5 秒采集一次远程主机指标；离开此页即停止采集。</p>
+          <div id="live-monitor-status">正在采集...</div>
+          <div id="live-monitor-metrics" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin:18px 0"></div>
+          <h3>最近 60 次采样</h3>
+          <div id="live-monitor-history" style="font-size:12px;color:var(--text-secondary)"></div>
+        </section>`;
       case 'processes':
         return this.renderProcessesTable();
       case 'network':

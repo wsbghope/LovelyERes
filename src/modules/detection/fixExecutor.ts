@@ -5,6 +5,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { FixActionDef } from './detectionFixMapper';
 import { fixHistoryManager, type FixHistoryEntry } from './fixHistoryManager';
+import { shellQuote } from '../utils/shellSafety';
 
 export type FixStatus = 'pending' | 'executing' | 'success' | 'failed' | 'rolled-back';
 
@@ -31,6 +32,7 @@ export interface FixResult {
 // 基线配置项解析后的可执行数据
 export interface ResolvedBaselineItem {
   id: string;
+  filePath: string;
   readCommand: string;
   writeCommand: (value: string) => string;
   parseRegex: string;
@@ -54,6 +56,8 @@ class FixExecutor {
   ): Promise<FixResult> {
     action.status = 'executing';
     onStatus?.(action);
+    let backupInfo = '';
+    let restoreCommand: string | undefined;
 
     try {
       let output = '';
@@ -68,7 +72,14 @@ class FixExecutor {
         action.currentValue = beforeValue;
 
         // 2. 备份
-        await this.exec(resolvedBaseline.backupCommand);
+        const file = shellQuote(resolvedBaseline.filePath);
+        const backupPath = `${resolvedBaseline.filePath}.lovelyres-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const backup = shellQuote(backupPath);
+        const absent = shellQuote(`${backupPath}.absent`);
+        await this.exec(`if [ -e ${file} ]; then cp -p -- ${file} ${backup}; else : > ${absent}; fi`);
+        backupInfo = backupPath;
+        restoreCommand = `if [ -e ${backup} ]; then cp -p -- ${backup} ${file}; elif [ -e ${absent} ]; then rm -f -- ${file}; else exit 1; fi`;
+        if (resolvedBaseline.restartCommand) restoreCommand += ` && (${resolvedBaseline.restartCommand})`;
 
         // 3. 写入推荐值
         const writeCmd = resolvedBaseline.writeCommand(action.def.recommendedValue || resolvedBaseline.recommendedValue);
@@ -90,6 +101,8 @@ class FixExecutor {
 
       } else if (action.def.type === 'snippet') {
         output = `代码片段 ${action.def.snippetId}: 请到安全速查页面复制修复代码`;
+      } else {
+        throw new Error('缺少可执行的修复配置');
       }
 
       action.status = 'success';
@@ -97,7 +110,6 @@ class FixExecutor {
       onStatus?.(action);
 
       // 记录到历史
-      const backupInfo = resolvedBaseline?.backupCommand || '';
       fixHistoryManager.addEntry({
         detectionItemId: action.detectionItemId,
         findingTitle: action.findingTitle,
@@ -107,7 +119,7 @@ class FixExecutor {
         beforeValue,
         afterValue,
         backupInfo,
-        restoreCommand: resolvedBaseline ? `${resolvedBaseline.backupCommand.replace('cp -n', 'ls')} && echo "backup exists"` : undefined,
+        restoreCommand,
         command: action.def.command,
         output,
         success: true,
@@ -128,6 +140,8 @@ class FixExecutor {
         fixTitle: action.def.title,
         type: action.def.type,
         baselineItemId: action.def.baselineItemId,
+        backupInfo,
+        restoreCommand,
         command: action.def.command,
         output: String(e),
         success: false,
@@ -193,6 +207,7 @@ class FixExecutor {
   private async exec(cmd: string): Promise<string> {
     try {
       const r = await invoke('ssh_execute_command_direct', { command: cmd }) as any;
+      if (r?.exit_code !== 0) throw new Error(r?.output || `退出码 ${r?.exit_code ?? '未知'}`);
       return r?.output || '';
     } catch (e) {
       throw new Error(`命令执行失败: ${e}`);
